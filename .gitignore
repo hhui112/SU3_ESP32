@@ -1,0 +1,38 @@
+# ESP-IDF / CMake
+build/
+CMakeFiles/
+sdkconfig.old
+*.pyc
+__pycache__/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*~
+~$*
+
+# 大体积工具与二进制（勿入库，推送会极慢）
+Debug/
+flash_download_tool/**/*.exe
+flash_download_tool/dl_temp/
+**/flash_download_tool_*.exe
+**/*.exe
+**/*.dll
+**/*.pdb
+**/*.rar
+**/*.zip
+!**/*.md
+!docs/**/*.pdf
+!docs/**/*.docx
+
+# 临时 / 生成
+*.bin
+*.bin_rep
+id/ID_Generator_Tool/*.exe
+components/protobuf.rar
+
+flash_download_tool/logs/
+

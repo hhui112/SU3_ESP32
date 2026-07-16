@@ -1,0 +1,486 @@
+/*
+ * @Author: fzh
+ * @Date: 2026-07-14 18:19:35
+ * @LastEditors: fzh
+ * @LastEditTime: 2026-07-14 18:19:35
+ */
+#include "su3_client.h"
+#include "su3_frame.h"
+#include "su3_proto.h"
+#include <string.h>
+#include <time.h>
+#include "esp_log.h"
+#include "driver/uart.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+#include "freertos/task.h"
+
+static const char *TAG = "su3_client";
+
+#define SU3_RX_CHUNK           256
+#define SU3_TX_FRAME_MAX       192
+#define SU3_CLI_IDLE_MS        80U    /* list 多应答空闲结束 */
+#define SU3_RX_TASK_STACK      8192   /* on_topic/解码在 RX 上下文，4096 易栈溢出破坏 UART ringbuf */
+#define SU3_RX_TASK_PRIO       10
+
+typedef struct {
+    bool              active;
+    su3_addr_t        expect_src; /* 期望应答源地址（即下发 dest） */
+    su3_resp_kind_t   kind;
+    char             *rsp;
+    size_t            rsp_cap;
+    size_t            rsp_len;
+    SemaphoreHandle_t done;
+    TickType_t        last_feed_tick;
+    bool              got_any;
+} su3_pending_t;
+
+static bool s_ready;
+static su3_config_t s_cfg;
+static su3_handlers_t s_handlers;
+static su3_frame_ctx_t *s_frame;
+static SemaphoreHandle_t s_tx_mutex;
+static SemaphoreHandle_t s_pending_mutex;
+static su3_pending_t s_pending;
+static TaskHandle_t s_rx_task;
+static char s_peer_id[SU3_SIDE_COUNT][24];
+
+static int32_t su3_now_ts(void)
+{
+    time_t now = time(NULL);
+    if (now < 0 || now < 1000000000L) {
+        return 0;
+    }
+    return (int32_t)now;
+}
+
+static void su3_store_peer_id(su3_addr_t src, const char *device_id)
+{
+    su3_side_t side = su3_addr_to_side(src);
+    if (side >= SU3_SIDE_COUNT || device_id == NULL || device_id[0] == '\0') {
+        return;
+    }
+    strncpy(s_peer_id[side], device_id, sizeof(s_peer_id[side]) - 1U);
+    s_peer_id[side][sizeof(s_peer_id[side]) - 1U] = '\0';
+}
+
+static const char *su3_device_id_for_dest(su3_addr_t dest)
+{
+    su3_side_t side = su3_addr_to_side(dest);
+    if (side < SU3_SIDE_COUNT && s_peer_id[side][0] != '\0') {
+        return s_peer_id[side];
+    }
+    if (s_cfg.device_id[0] != '\0') {
+        return s_cfg.device_id;
+    }
+    return "SU20000001";
+}
+
+static void pending_clear(void)
+{
+    s_pending.active = false;
+    s_pending.expect_src = 0;
+    s_pending.rsp = NULL;
+    s_pending.rsp_cap = 0;
+    s_pending.rsp_len = 0;
+    s_pending.got_any = false;
+    s_pending.kind = SU3_RESP_SINGLE;
+}
+
+static void pending_feed_text(su3_addr_t src, const char *text)
+{
+    size_t need;
+    size_t tlen;
+
+    if (!s_pending.active || text == NULL) {
+        return;
+    }
+    if (s_pending.expect_src != 0 && src != s_pending.expect_src) {
+        return;
+    }
+
+    tlen = strlen(text);
+    if (s_pending.kind == SU3_RESP_SINGLE) {
+        if (s_pending.rsp != NULL && s_pending.rsp_cap > 0) {
+            strncpy(s_pending.rsp, text, s_pending.rsp_cap - 1U);
+            s_pending.rsp[s_pending.rsp_cap - 1U] = '\0';
+            s_pending.rsp_len = strlen(s_pending.rsp);
+        }
+        s_pending.got_any = true;
+        s_pending.active = false;
+        if (s_pending.done) {
+            xSemaphoreGive(s_pending.done);
+        }
+        return;
+    }
+
+    /* MULTIFRAME：拼接文本，空闲超时由 RX 任务结束 */
+    if (s_pending.rsp == NULL || s_pending.rsp_cap == 0) {
+        return;
+    }
+    need = s_pending.rsp_len + tlen + 1U;
+    if (need > s_pending.rsp_cap) {
+        tlen = s_pending.rsp_cap - s_pending.rsp_len - 1U;
+    }
+    if (tlen > 0) {
+        memcpy(&s_pending.rsp[s_pending.rsp_len], text, tlen);
+        s_pending.rsp_len += tlen;
+        s_pending.rsp[s_pending.rsp_len] = '\0';
+    }
+    s_pending.got_any = true;
+    s_pending.last_feed_tick = xTaskGetTickCount();
+}
+
+static void su3_on_pdu(const su3_pdu_info_t *pdu, void *user)
+{
+    char cmd[128];
+    char devid[24];
+    (void)user;
+
+    if (pdu == NULL) {
+        return;
+    }
+
+    if (pdu->topic == SU3_TOPIC_CLI) {
+        memset(devid, 0, sizeof(devid));
+        if (su3_proto_decode_cli(pdu->pb_data, pdu->pb_len, cmd, sizeof(cmd),
+                                 devid, sizeof(devid)) != ESP_OK) {
+            return;
+        }
+        ESP_LOGI(TAG, "cli src=0x%02X dst=0x%02X cmd=\"%s\" id=%s",
+                 pdu->src_addr, pdu->dst_addr, cmd, devid);
+        su3_store_peer_id(pdu->src_addr, devid);
+
+        if (xSemaphoreTake(s_pending_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+            if (s_pending.active &&
+                (s_pending.kind == SU3_RESP_SINGLE || s_pending.kind == SU3_RESP_MULTIFRAME)) {
+                pending_feed_text(pdu->src_addr, cmd);
+                xSemaphoreGive(s_pending_mutex);
+                return;
+            }
+            xSemaphoreGive(s_pending_mutex);
+        }
+
+        if (s_handlers.on_hello != NULL && strstr(cmd, "hello") != NULL) {
+            s_handlers.on_hello(pdu->src_addr, s_handlers.user);
+        }
+        if (s_handlers.on_cli_push != NULL) {
+            s_handlers.on_cli_push(pdu->src_addr, cmd, devid, s_handlers.user);
+        }
+        return;
+    }
+
+    if (s_handlers.on_topic != NULL) {
+        s_handlers.on_topic(pdu->src_addr, pdu->topic, pdu->pb_data, pdu->pb_len,
+                            s_handlers.user);
+    }
+}
+
+static esp_err_t su3_uart_send_frame(const uint8_t *frame, size_t len)
+{
+    int written;
+
+    if (frame == NULL || len == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (xSemaphoreTake(s_tx_mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
+    written = uart_write_bytes(s_cfg.uart_port, (const char *)frame, len);
+    xSemaphoreGive(s_tx_mutex);
+    if (written < 0 || (size_t)written != len) {
+        return ESP_FAIL;
+    }
+    return ESP_OK;
+}
+
+static esp_err_t su3_send_cli_pdu(su3_addr_t dest, const char *cmd)
+{
+    uint8_t pdu[160];
+    uint8_t frame[SU3_TX_FRAME_MAX];
+    size_t pdu_len = 0;
+    size_t frame_len;
+    esp_err_t err;
+
+    err = su3_proto_encode_cli(su3_device_id_for_dest(dest), su3_now_ts(), cmd,
+                               pdu, sizeof(pdu), &pdu_len);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    frame_len = su3_frame_build(s_cfg.self_addr, dest, SU3_MF_SINGLE, pdu, pdu_len,
+                                frame, sizeof(frame));
+    if (frame_len == 0) {
+        return ESP_FAIL;
+    }
+    return su3_uart_send_frame(frame, frame_len);
+}
+
+static void su3_check_list_idle(void)
+{
+    if (xSemaphoreTake(s_pending_mutex, 0) != pdTRUE) {
+        return;
+    }
+    if (s_pending.active &&
+        s_pending.kind == SU3_RESP_MULTIFRAME &&
+        s_pending.got_any) {
+        TickType_t now = xTaskGetTickCount();
+        if ((now - s_pending.last_feed_tick) >= pdMS_TO_TICKS(SU3_CLI_IDLE_MS)) {
+            s_pending.active = false;
+            if (s_pending.done) {
+                xSemaphoreGive(s_pending.done);
+            }
+        }
+    }
+    xSemaphoreGive(s_pending_mutex);
+}
+
+static void su3_rx_task(void *arg)
+{
+    uint8_t chunk[SU3_RX_CHUNK];
+    uint32_t rx_bytes = 0;
+    TickType_t last_stat = xTaskGetTickCount();
+    (void)arg;
+
+    ESP_LOGI(TAG, "rx task start");
+    while (1) {
+        int n = uart_read_bytes(s_cfg.uart_port, chunk, sizeof(chunk), pdMS_TO_TICKS(20));
+        if (n > 0) {
+            rx_bytes += (uint32_t)n;
+            su3_frame_feed(s_frame, chunk, (size_t)n);
+        }
+        su3_check_list_idle();
+
+        /* 每 5s 打印一次 RX 统计，便于判断「无串口数据」还是「CRC/解析失败」 */
+        if ((xTaskGetTickCount() - last_stat) >= pdMS_TO_TICKS(5000)) {
+            uint32_t ok = 0, crc_fail = 0, overflow = 0;
+            su3_frame_get_stats(s_frame, &ok, &crc_fail, &overflow);
+            ESP_LOGI(TAG, "rx stats: bytes=%u frame_ok=%u crc_fail=%u overflow=%u",
+                     (unsigned)rx_bytes, (unsigned)ok, (unsigned)crc_fail, (unsigned)overflow);
+            last_stat = xTaskGetTickCount();
+        }
+    }
+}
+
+static esp_err_t su3_uart_setup(void)
+{
+    uart_config_t uc = {
+        .baud_rate = s_cfg.baud_rate,
+        .data_bits = UART_DATA_8_BITS,
+        .parity = UART_PARITY_DISABLE,
+        .stop_bits = UART_STOP_BITS_1,
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+        .source_clk = UART_SCLK_APB,
+    };
+
+    if (!uart_is_driver_installed(s_cfg.uart_port)) {
+        /* RX 环缓 4K；TX 用 0=阻塞写，避免多余 ringbuf、降低异常面 */
+        esp_err_t err = uart_driver_install(s_cfg.uart_port, SU3_RING_BUF_SIZE, 0,
+                                            0, NULL, 0);
+        if (err != ESP_OK) {
+            return err;
+        }
+        err = uart_param_config(s_cfg.uart_port, &uc);
+        if (err != ESP_OK) {
+            return err;
+        }
+        err = uart_set_pin(s_cfg.uart_port, s_cfg.tx_pin, s_cfg.rx_pin,
+                           UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+        if (err != ESP_OK) {
+            return err;
+        }
+    } else {
+        ESP_LOGW(TAG, "uart%d already installed, reuse (ensure baud/pins match)",
+                 (int)s_cfg.uart_port);
+    }
+    return ESP_OK;
+}
+
+esp_err_t su3_init(const su3_config_t *cfg)
+{
+    esp_err_t err;
+
+    if (cfg == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (s_ready) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    s_cfg = *cfg;
+    if (s_cfg.self_addr == 0) {
+        s_cfg.self_addr = SU3_ADDR_ESP32_DEFAULT;
+    }
+    if (s_cfg.addr_left == 0) {
+        s_cfg.addr_left = SU3_ADDR_LEFT_DEFAULT;
+    }
+    if (s_cfg.addr_right == 0) {
+        s_cfg.addr_right = SU3_ADDR_RIGHT_DEFAULT;
+    }
+    if (s_cfg.baud_rate == 0) {
+        s_cfg.baud_rate = 115200;
+    }
+    /* UART_NUM_0 合法；用 tx/rx 为 0 且未指定 port 时才默认 NUM_1 */
+    if (s_cfg.tx_pin == 0 && s_cfg.rx_pin == 0) {
+        s_cfg.tx_pin = 22;
+        s_cfg.rx_pin = 26;
+        if (cfg->uart_port == 0 && cfg->baud_rate == 0) {
+            s_cfg.uart_port = UART_NUM_1;
+        }
+    }
+
+    s_tx_mutex = xSemaphoreCreateMutex();
+    s_pending_mutex = xSemaphoreCreateMutex();
+    s_pending.done = xSemaphoreCreateBinary();
+    if (s_tx_mutex == NULL || s_pending_mutex == NULL || s_pending.done == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
+    pending_clear();
+    memset(s_peer_id, 0, sizeof(s_peer_id));
+
+    s_frame = su3_frame_create(su3_on_pdu, NULL);
+    if (s_frame == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
+
+    err = su3_uart_setup();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "uart setup fail: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    BaseType_t ok = xTaskCreatePinnedToCore(su3_rx_task, "su3_rx", SU3_RX_TASK_STACK,
+                                            NULL, SU3_RX_TASK_PRIO, &s_rx_task, 1);
+    if (ok != pdPASS) {
+        return ESP_ERR_NO_MEM;
+    }
+
+    s_ready = true;
+    ESP_LOGI(TAG, "su3_init ok uart=%d baud=%d self=0x%02X L=0x%02X R=0x%02X pins tx=%d rx=%d",
+             (int)s_cfg.uart_port, s_cfg.baud_rate, s_cfg.self_addr,
+             s_cfg.addr_left, s_cfg.addr_right, s_cfg.tx_pin, s_cfg.rx_pin);
+    return ESP_OK;
+}
+
+void su3_set_handlers(const su3_handlers_t *handlers)
+{
+    if (handlers == NULL) {
+        memset(&s_handlers, 0, sizeof(s_handlers));
+        return;
+    }
+    s_handlers = *handlers;
+}
+
+esp_err_t su3_cli_exec(su3_addr_t dest, const char *cmd,
+                       char *rsp, size_t rsp_len, uint32_t timeout_ms)
+{
+    esp_err_t err;
+    su3_resp_kind_t kind;
+
+    if (!s_ready || cmd == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (rsp == NULL || rsp_len == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    kind = su3_proto_classify_cmd(cmd);
+    if (kind == SU3_RESP_FIRE_FORGET) {
+        return su3_cli_fire(dest, cmd);
+    }
+
+    if (xSemaphoreTake(s_pending_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
+    if (s_pending.active) {
+        xSemaphoreGive(s_pending_mutex);
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    /* 清空 done 信号量 */
+    while (xSemaphoreTake(s_pending.done, 0) == pdTRUE) {
+    }
+
+    s_pending.active = true;
+    s_pending.expect_src = dest;
+    s_pending.kind = kind;
+    s_pending.rsp = rsp;
+    s_pending.rsp_cap = rsp_len;
+    s_pending.rsp_len = 0;
+    s_pending.got_any = false;
+    s_pending.last_feed_tick = xTaskGetTickCount();
+    rsp[0] = '\0';
+    xSemaphoreGive(s_pending_mutex);
+
+    err = su3_send_cli_pdu(dest, cmd);
+    if (err != ESP_OK) {
+        xSemaphoreTake(s_pending_mutex, portMAX_DELAY);
+        pending_clear();
+        xSemaphoreGive(s_pending_mutex);
+        return err;
+    }
+
+    if (xSemaphoreTake(s_pending.done, pdMS_TO_TICKS(timeout_ms)) != pdTRUE) {
+        xSemaphoreTake(s_pending_mutex, portMAX_DELAY);
+        pending_clear();
+        xSemaphoreGive(s_pending_mutex);
+        return ESP_ERR_TIMEOUT;
+    }
+
+    xSemaphoreTake(s_pending_mutex, portMAX_DELAY);
+    pending_clear();
+    xSemaphoreGive(s_pending_mutex);
+    return ESP_OK;
+}
+
+esp_err_t su3_cli_list(su3_addr_t dest, char *rsp, size_t rsp_len, uint32_t timeout_ms)
+{
+    return su3_cli_exec(dest, "list", rsp, rsp_len, timeout_ms);
+}
+
+esp_err_t su3_cli_fire(su3_addr_t dest, const char *cmd)
+{
+    if (!s_ready || cmd == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    return su3_send_cli_pdu(dest, cmd);
+}
+
+su3_addr_t su3_side_to_addr(su3_side_t side)
+{
+    if (side == SU3_SIDE_LEFT) {
+        return s_ready ? s_cfg.addr_left : SU3_ADDR_LEFT_DEFAULT;
+    }
+    if (side == SU3_SIDE_RIGHT) {
+        return s_ready ? s_cfg.addr_right : SU3_ADDR_RIGHT_DEFAULT;
+    }
+    return 0;
+}
+
+su3_side_t su3_addr_to_side(su3_addr_t addr)
+{
+    uint8_t left = s_ready ? s_cfg.addr_left : SU3_ADDR_LEFT_DEFAULT;
+    uint8_t right = s_ready ? s_cfg.addr_right : SU3_ADDR_RIGHT_DEFAULT;
+    if (addr == left) {
+        return SU3_SIDE_LEFT;
+    }
+    if (addr == right) {
+        return SU3_SIDE_RIGHT;
+    }
+    return SU3_SIDE_COUNT;
+}
+
+bool su3_is_ready(void)
+{
+    return s_ready;
+}
+
+esp_err_t su3_sensor_ota(su3_addr_t dest, const uint8_t *payload, size_t len)
+{
+    (void)dest;
+    (void)payload;
+    (void)len;
+    /* TODO(SU3): 传感器固件升级协议与 RX 互斥尚未实现 */
+    ESP_LOGW(TAG, "su3_sensor_ota not implemented");
+    return ESP_ERR_NOT_SUPPORTED;
+}

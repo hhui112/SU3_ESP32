@@ -1,0 +1,15 @@
+idf_component_register(
+    SRCS
+        "su3_crc.c"
+        "su3_frame.c"
+        "su3_proto.c"
+        "su3_client.c"
+    INCLUDE_DIRS
+        "include"
+        "."
+    REQUIRES
+        driver
+        freertos
+    PRIV_REQUIRES
+        protobuf
+)
