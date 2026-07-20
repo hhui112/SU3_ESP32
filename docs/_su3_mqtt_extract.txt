@@ -1,0 +1,739 @@
+盛和养老系统下发协议
+阿里云MQTT通信
+Topic list
+说明
+/ixvaCaIfGla/KSPSBED00000784/user/cli/put
+业务控制指令上传
+/ixvaCaIfGla/KSPSBED00000784/user/5s/put
+5s数据上传
+/ixvaCaIfGla/KSPSBED00000784/user/60s/put
+60s数据上传
+/ixvaCaIfGla/KSPSBED00000784/user/sleep/put
+睡眠报告数据上传
+/ixvaCaIfGla/KSPSBED00000784/user/mccli/put
+床控数据上传
+/ota/device/inform/ixvaCaIfGla/KSPSBED00000784
+Ota数据上传
+/ixvaCaIfGla/KSPSBED00000784/user/cli/get
+业务控制指令下发
+/ota/device/upgrade/ixvaCaIfGla/KSPSBED00000784
+Ota数据下发
+业务控制指令下发topic：/ixvaCaIfGla/${deviceName}/user/cli/get
+业务控制指令反馈topic：/ixvaCaIfGla/${deviceName}/user/cli/put
+数据格式
+下发指令例：
+{
+"id":"KSPSBED00002828",
+"ts":123456789,
+"type":"sensorCli",
+"cmd":"list"
+}
+指令反馈例：
+{
+"id":"KSPSBED00000100",
+"ts":123456789,
+"cmd":"list",
+"back":"%s"
+}
+格式解释：“id”为设备名“devicname”；“ts”为实时时间戳；“type”为指令分类，分为“sensorCli”传感器指令以及“deviceCli”设备指令；“cmd”为具体指令；“back”为指令反馈上报数据。
+“deviceCli”
+“cmd”
+“back”
+注释
+dataUpSwitch
+1/0
+1：数据上传开启
+0：数据上传关闭
+“sensorCli”
+“cmd”
+“back”
+注释
+version
+SU2-1.0.0,Board:1.0
+读取版本信息，反馈软件版本，硬件版本
+reboot
+ok
+SU2重新启动 
+get mode
+1
+查询状态（工作/空闲），出错代码。
+0:空闲（2分钟没有收到指令，进入默认工作状态）；
+1:开启1分钟数据伴随（掉电保存）；
+2:开启5秒+1分钟数据伴随（默认模式）
+3：固件升级（在2分钟没有收到指令，自动进入默认工作状态）
+set mode 0
+ok
+强制算法生成睡眠报告并停止工作，掉电不保存，进入空闲状态。2分钟内没有收到指令时自动进入工作状态（mode 2）
+set mode 2
+ok
+设置之后1分/5秒数据开启与否（默认模式）
+set mode 3
+ok
+固件升级，掉电不保存（在 2 分钟没有收 到指令，自动进入默认工作状态）
+set mode 4
+ok
+立即工作指令（可打断mode 0） , 在端口配置后，且设备处于待机状态后可响应该指令。
+(传感器固件版本大于SU 1.9.2)
+set calibration manual
+ok
+manual:进入手动校准模式
+auto:自动校准模式
+get calibration
+manual
+manual:手动校准模式
+auto:自动校准模式（默认）
+list 
+0 2021-08-24 17：15：39  009
+1 2021-08-24 20：07：34  006
+2 2021-08-24 21：16：46  001
+3 2021-08-25 06：32：23  521
+4 2021-08-25 11：51：42  004
+5 2021-08-25 13：20：40  001
+6 2021-08-25 14：35：16  065
+查询睡眠报告列表信息
+report 5 2023-10-26 14:18:03 525
+上传相应睡眠报告数据
+分别发送基础数据，睡眠周期数据，心率，呼吸，体动，打鼾，收缩压，舒张压数据
+传感器校准指令（关闭自动校准才可以使用）
+set sbp 127
+ok
+血压参数设置（查询）指令：
+收缩压sbp：默认127，
+舒张压dbp：默认83，
+校准前的累计数据个数bpn：默认40（每分钟1个数据，血压参数设定后需要使用40分钟后才能正确校正完成）
+正常人可以依据下表设置：（高低血压患者需要测量后设定参数）
+  年龄    男        女
+  20    116/74    108/68
+  30    119/79    110/71
+  40    127/83    118/75
+  50    132/86    123/75
+  60    137/85    132/80
+  70    139/81    136/79
+血压基准值如何获取：
+推荐坐姿使用臂式血压计连续测试6次，取最后3次的平均值。
+set dbp 83
+set bpn 40
+get sbp
+127
+get dbp
+83
+get bpn
+40
+参数读写指令 
+set param_o 0 51.21 
+ok 
+设置参数0的值51.21 
+get param_o 0 
+51.21 
+获取参数0的值 
+get param_o 
+param_o 0： 
+param_o 1： 
+param_o:2：43.2 
+... 
+获取所有参数值 
+get param 
+mode: 1 
+version: version: version: version: 
+devid: SU20000001 
+rtc:1622234876 
+calibration:manual 
+sbp:127 
+dbp: 83 
+bpn: 40 
+反馈所有参数 
+3. 
+“airbagCli”
+“cmd”
+“back”
+注释
+get_status
+{
+{"sw_ver":100,"hw_ver":100,"rc_ver":17493,"stretch_mode":0,"wh_state":0,"wh_temp":35,"wh_level":0,"wh_err":0,"lh_state":0,"lh_temp":35,"lh_level":0,"lh_err":0,"sh_adapt_level":1,"sh_pump":0,"sh_valve":0,"sh_pressure":1,"wh_adapt_level":1,"wh_pump":0,"wh_valve":0,"wh_pressure":0,"mcbox_status":0”,”off_bed”:0,”turning_times”:0}
+}
+查询气囊主控盒状态
+1、心跳：5分钟上报一次
+2、App发送该命令会直接上报一次
+3、当拉伸、腰部加热、腿部加热、肩部、腰部自适应等级、ai模式变化时候自动上报一次
+Note：主动查询发送在/ixvaCaIfGla/${deviceName}/user/cli/put
+自动上报发送在：/ixvaCaIfGla/${deviceName}/user/airbag/put
+set sms 0
+Ok 失败返回错误信息
+设置拉伸模式状态 0-3   (0 关闭，1-3档位)
+set whs 0
+ok
+设置腰部加热状态 0-3
+set lhs 0
+ok
+设置腿部加热状态 0-3
+set shl 0
+ok
+设置肩部自适应强度等级0-5 
+(0关闭（预留），1-5等级）
+set whl 0
+ok
+设置腰部自适应强度等级0-5
+set aim 0
+ok
+AI模式0-1（0关闭 1开启）
+set si 0
+ok
+肩部充气1充气 0停止
+set sd 0
+ok
+肩部放气1放气 0停止
+set wi 0
+ok
+腰部充气1充气 0停止
+set wd 0
+ok
+腰部放气 1开始 0停止
+set lf 0
+ok
+一键放平
+例如: 
+3、气囊主控盒数据上报topic：
+13
+气囊主控盒数据
+/ixvaCaIfGla/KSPSBED00000500/user/airbag/put
+Topic数据格式如下：
+{
+"id":"KSPSBED00000500","ts":1777727249,
+"type":13,
+"data":{
+"sw_ver":100,
+"hw_ver":100,
+"rc_ver":0,
+"stretch_mode":0,
+"wh_state":0,
+"wh_temp":35,
+"wh_level":0,
+"wh_err":0,
+"lh_state":0,
+"lh_temp":35,
+"lh_level":0,
+"lh_err":0,
+"sh_adapt_leve":1,
+"sh_pump":0,
+"sh_valve":0,
+"sh_pressure":1,
+"wh_adapt_level":1,
+"wh_pump":0,
+"wh_valve":0,
+"wh_pressure":0,
+"off_bed ":0,
+"turning_times ":0
+}
+}
+Topic数据具体含义如下：
+typedef struct {
+    uint16_t sw_ver;      // 主控盒版软件本号
+    uint16_t hw_ver;      // 主控盒版硬件本号
+    uint16_t rc_ver;      // 遥控器版本号
+    uint8_t stretch_mode; // 拉伸模式状态 11
+    uint8_t wh_state;     // 腰部加热垫状态
+    uint8_t wh_temp;      // 腰部加热垫温度
+    uint8_t wh_level;     // 腰部加热垫档位 14
+    uint8_t wh_err;       // 腰部加热垫故障码
+    uint8_t lh_state;     // 腿部加热垫状态 
+    uint8_t lh_temp;      // 腿部加热垫温度
+    uint8_t lh_level;     // 腿部加热垫档位 18
+    uint8_t lh_err;       // 腿部加热垫故障码
+    uint8_t sh_adapt_level;     // 肩部自适应强度等级 20
+    uint8_t sh_pump;      // 肩部气磅开关
+    uint8_t sh_valve;     // 肩部气阀开关
+    uint16_t sh_pressure; // 肩部气压值
+    uint8_t wh_adapt_level;  // 腰部自适应强度等级 25
+    uint8_t wh_pump;         // 腰部气磅开关
+    uint8_t wh_valve;        // 腰部气阀开关
+    uint16_t wh_pressure;    // 腰部气压值
+uint8_t mcbox_status;    // 主控盒状态 30
+uint8_t off_bed;    // 主控盒的离床状态 31
+uint8_t turing_time;// 翻身次数 32
+} ControlBox_Info_t;
+4、新增床控和打鼾干预功能
+4.1 下发topic使用原来的
+/ixvaCaIfGla/KSPSBED00000784/user/cli/get
+床控数据下发
+4.2 床控下发协议：
+{
+"id":"KSPSBED00001060",
+"ts":123456789,
+"type":"mcCli",
+"cmd":" AA020B080100000078010F5030xxxx "
+}
+4.2.1 Cmd字段的总帧协议为：
+帧头
+类型
+数据长度
+内帧数据
+校验
+1byte
+1byte
+1byte
+Nbyte
+1byte
+固定0xAA
+0x01
+N
+N
+帧头：固定为0xAA
+Type类型定义如下: 
+0: 参数查询（打鼾干预参数）
+1：键值发送（普通、缓启动、按摩）
+2：演示命令（打鼾干预流程）
+3：参数设置（打鼾干预参数设置）
+数据长度为：内帧数据的长度 = 内帧数据长度+3  （N = length+3）
+4.2.2 内帧数据协议
+内帧数据参照《JLDP.15.028.322 串口协议》
+例如：05010002000000f7
+具体键值见下表：
+按摩枚举没用，主控盒有这个功能暂时保留
+type=2 和type=3 ：后续如有其他演示功能或者参数设置再进行设计，当前对于cmd的协议与上述缓启动命令相同，不在重复书写。
+1、参数查询
+AA 00 03 00 01 XX XX
+解释：
+帧头
+类型
+数据长度
+内帧数据
+校验(外帧校验不判断)
+AA
+00
+03
+00 01 xx
+xx
+固定帧头：AA
+类型： 00（参数查询）
+数据长度01
+内帧数据00 01 xx
+校验 xx
+内帧数据解释
+内帧长度
+Type
+校验
+00
+01
+xx
+长度 00
+类型 01 （打鼾干预参数上报）
+校验 xx
+2、键值传输
+例1：AA 01 08 05 01 00 02 00 00 00 f7 xx  (中间无空格)
+解释：
+帧头
+类型
+数据长度
+内帧数据
+校验(外帧校验不判断)
+AA
+01
+08
+05 01 00 02 00 00 00 f7
+xx
+固定帧头：AA 
+类型：  01 （键值发送命令）
+数据长度：08(内帧总长度= 内帧长度+3(头、type、校验位)) 8 = 5+3
+内帧数据：05 01 00 02 00 00 00 f7
+校验和：xx
+内帧数据解释
+内帧长度
+Type
+键值
+CMD
+校验
+05
+01
+00 02 00 00
+00 
+f7
+内帧长度：05：键值+CMD的位数
+例2：  AA010A07010000800000500522B4
+帧头
+类型
+数据长度
+内帧数据
+校验（不判断）
+AA
+01
+0A
+07010000800000500522
+B4
+固定帧头：AA 
+类型：  01 （键值发送命令）
+内帧数据长度：0A（10 = 7+3）
+内帧数据：07 01 00008000 00 50 05 22
+校验和：xx 
+内帧长度
+Type
+键值
+左右床
+PWM
+Tmr
+校验
+07
+01
+00 00 80 00
+00 
+50
+05
+22
+3、演示流程 （暂时只有打鼾干预）
+AA020B0801000000780F015014xxxx
+帧头
+类型
+数据长度
+内帧数据
+校验(不判断)
+AA
+02
+0B
+0801000000780F015014xx
+xx
+固定帧头：AA 
+类型：  01 （演示流程）
+数据长度：0B（11 = 8+3）
+内帧数据：08 01 00000078 01 0F 50 14xx
+校验和：xx 
+ 120168020
+内帧长度
+Type
+up_hold_time_s
+threshold_5s
+threshold
+PWM
+TMR
+校验（不判断）
+08
+01
+00 00 00 78
+01
+0F
+50
+14
+XX
+内帧长度08
+内帧类型：  01 （打鼾干预演示触发）
+打鼾干预延时总时间：00 00 0078 = 120秒
+打鼾包判断阈值0F （15/24 两分钟有15个判断为打鼾）
+PWM50 （抬起速度）
+TMR14 （抬起时间）
+校验和：xx
+4、参数设置 （暂时只有打鼾干预参数）
+AA030B080100000708010F5030xxxx
+帧头
+类型
+数据长度
+内帧数据
+校验(不判断)
+AA
+03
+0B
+080100000708010F5020xx
+xx
+固定帧头：AA 
+类型：  03（参数设置）
+数据长度：0B（11 = 8+3）
+内帧数据：08 01 00000708 01 0F 50 30xx
+校验和：xx 
+内帧长度
+Type
+up_hold_time_s
+threshold_5s
+threshold
+PWM
+TMR
+校验（不判断）
+08
+01
+00 00 07 08
+01
+0F
+50
+30
+XX
+内帧长度07
+内帧类型：  01 （打鼾干预参数设置） 02（后续其他参数设置）
+打鼾干预延时总时间：00 00 0078 = 120秒
+打鼾包判断阈值0F （16/24 两分钟有16个判断为打鼾）
+PWM50 （抬起速度）
+TMR30 （抬起时间）
+校验和：
+打鼾干预强度等级：可以通过控制打鼾包阈值控制，协议中体现为0F 2分钟16次打鼾触发干预
+保持时间：32位 1800 = 00 00 07 08    60 = 00 00 00 3C  120 = 00 00 00 78
+PWM：缓启动速度 
+TMR：缓启动抬升时间
+{
+"id":"KSPSBED00001193",
+"ts":123456789,
+"type":"mcCli",
+"cmd":" AA010805010100000000f8XX "
+} 
+测试过的附带校验和的指令如下：
+命令
+功能
+注释
+AA00030001XXXX
+打鼾干预参数查询
+查询
+AA00030002XXXX
+主控盒参数查询
+暂定上报原始数据
+AA00030003XXXX
+按摩参数查询
+暂无（从原始数据中解）
+AA010805010100000000f8XX
+头部抬起
+键值发送
+AA010805010200000000f7XX
+头部放下
+AA010805010400000000f5XX
+腿部抬起
+AA010805010800000000f1XX
+腿部放下
+AA010805010000000800f1XX
+一键放平
+AA010805015000000000a9XX
+床体抬升
+AA01080501a00000000059XX
+床体放下
+AA010805010010000000e9XX
+零重力位置
+AA010805010020000000d9XX
+阅读/休闲位置
+AA010805010040000000b9XX
+观影/TV位置
+AA010805010000400000b9XX
+上床位置
+AA010805010000001000e9XX
+下床位置
+AA010805010000004000b9XX
+一键入眠
+AA01080501008000000079XX
+止鼾位置
+AA010805010000010000f8XX
+音乐位置
+AA01080501000000800079XX
+一键放松
+AA010805010000002000d9XX
+一键解压
+AA010805010000020000f7XX
+床底灯开关
+一下开 一下关
+AA010D0A01000000000000880000006CXX
+感应灯传感器关闭
+10s左右响应
+AA010D0A01000000000000880100006BXX
+感应灯传感器开启
+5s左右响应 
+AA010805010001000000f8XX
+ALL按摩强度切换
+默认普通按摩模式0 (遥控器)
+AA010805010008000000f1XX
+头部马达强度切换
+M1
+AA010805010004000000f5XX
+腿部马达强度切换
+M2
+AA010805010002000000f7XX
+按摩时间10/20/30/0
+AA010805010000080000f1XX
+按摩模式1
+AA010805010000100000e9XX
+按摩模式2
+AA010805010000200000d9XX
+按摩模式3
+缓启动
+AA010A0701000000080050306fXX
+缓启动一键放平
+pwm=80 time = 255
+AA010A070100800000005030f7xx
+缓启动到打鼾记忆位置
+pwm=80 time=48
+AA020B080100000078010F5030xxxx
+打鼾干预演示流程
+Time = 120 pwm= 80  tmr=48
+AA030B080100000708010F5030xxxx
+打鼾干预参数设置
+Time =1800  threshold _5s= 1 threshold=15 pwm=80  tmr=48
+注：和校验函数
+unsigned char rxCalcCheckSum(void)
+{
+uint16_t i;
+uint8_t sum;
+sum = 0xff;
+for (i = 0; i &lt; ((uint16_t)2 + (uint16_t)g_Sync_RX.Syncdata.length); i++)
+{
+sum -= g_Sync_RX.rawData[i];
+}
+return sum;
+}
+/ixvaCaIfGla/KSPSBED00000784/user/mci/put
+床控数据上传
+当前仅在打鼾干预事件触发或者主动下发查询命令的时候上报：打鼾干预参数
+上报格式如下;
+{ 
+"id": " KSPSBED00001060", 
+"ts": 1744790505,
+"type": 16,
+"report":"snore_param",
+"data":
+{
+"triggered_flag":0,
+"triggered_flag_demo":1,
+"upHoldTime":120,
+"threshold":0,
+"threshold5s":0,
+"pwm":80,
+"tmr":48,
+"lastTriggeredTime":1744790385,
+"isIntervening":0
+}
+}
+数据具体含义如下：
+"triggered_flag":0,    打鼾干预触发标志
+"triggered_flag_demo":1,打鼾干预演示触发标志
+"upHoldTime":120,保持时间
+"threshold":0,2分钟打鼾包阈值(灵敏度)
+"threshold5s":0,5s内打鼾包判断阈值
+"pwm":80,缓启动速度
+"tmr":48,缓启动时间
+"lastTriggeredTime":1744790385,打鼾干预触发时间
+"isIntervening":0打鼾干预中
+每200ms自动上报：主控盒原始数据
+上报格式如下：
+{
+"id":"KSPSBED00001159",
+"ts":1750666280,
+"type":12,
+"data_hex":"3C 07 00 00 00 00 28 00 BB 62 01 00 04 08 41 07 00 00 00 00 00 00 01 00 01 00 F9 FF FE FF FA FF FA FF 00 00 03 00 00 00 EE 04 "
+}
+仅在发送按摩查询命令后回传按摩参数：(暂未定义 当前可以从原始数据中读取)
+上报格式如下：
+{
+"id":"KSPSBED00001159",
+"ts":1750666280,
+"type":11,
+"data":"…."
+}
+蓝牙通信
+Type
+说明
+1
+5s
+2
+60s
+3
+配网
+4
+传感器升级
+5
+传感器升级
+13
+气囊数据
+5s 60s数据：
+Device -APP
+{ 
+"id": "KSPSBED88888888", 
+"ts": 1537553586,
+"type": 1,
+"data": 
+{
+"heart": "17", 
+"breath": "81",
+"status": "[0,0,0,0,0]"
+}
+}
+配网 
+App-&gt;Device 
+{ 
+"id": "KSPSBED88888888", 
+"ts": 1537553586,
+"type": 3,
+"cmd": 
+{
+"ssid": "DS", 
+"passwd": "ds654321"
+}
+}
+Device -APP
+App-&gt;Device 
+{ 
+"id": "KSPSBED88888888", 
+"ts": 1537553586,
+"type": 3,
+"cmd": 
+{
+"ssid": "DS", 
+"passwd": "ds654321"
+}
+}
+App-&gt;Device 
+{ 
+"id": "KSPSBED88888888", 
+"ts": 1537553586,
+"type": 3,
+"state": "wifiOK"// 失败wifiFail
+}
+App-&gt;Device 
+{ 
+"id": "KSPSBED88888888", 
+"ts": 1537553586,
+"type": 3,
+"state": "mqttOK"  // 失败mqttFail
+}
+注：依次返回成功算配网成功
+传感器升级
+气囊数据
+App-&gt;Device 
+{ 
+"id": "KSPSBED88888888", 
+"ts": 1537553586,
+"type": 13,
+"cmd": "set mode 0"
+}
+当气囊数据发送变化时：
+{ 
+"id": "KSPSBED88888888", 
+"ts": 1537553586,
+"type": 13,
+"data":
+{
+"sw_ver":100,
+"hw_ver":100,
+"rc_ver":0,
+"stretch_mode":0,
+"wh_state":0,
+"wh_temp":35,
+"wh_level":0,
+"wh_err":0,
+"lh_state":0,
+"lh_temp":35,
+"lh_level":0,
+"lh_err":0,
+"sh_adapt_leve":1,
+"sh_pump":0,
+"sh_valve":0,
+"sh_pressure":1,
+"wh_adapt_level":1,
+"wh_pump":0,
+"wh_valve":0,
+"wh_pressure":0,
+"off_bed ":0,
+"turing_times ":0
+}
+}
+主控盒控制原始数据
+App-&gt;Device 
+{ 
+"id": "KSPSBED88888888", 
+"type": 12,
+"data_hex": " …………. "// 与mqtt协议帧一致
+}
+6．主控盒按摩参数数据
+App-&gt;Device 
+{ 
+"id": "KSPSBED88888888", 
+"type": 11,
+"data": " …………. "// 与mqtt协议帧一致
+}
