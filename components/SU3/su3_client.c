@@ -89,7 +89,6 @@ static void pending_clear(void)
 
 static void pending_feed_text(su3_addr_t src, const char *text)
 {
-    size_t need;
     size_t tlen;
 
     if (!s_pending.active || text == NULL) {
@@ -118,8 +117,12 @@ static void pending_feed_text(su3_addr_t src, const char *text)
     if (s_pending.rsp == NULL || s_pending.rsp_cap == 0) {
         return;
     }
-    need = s_pending.rsp_len + tlen + 1U;
-    if (need > s_pending.rsp_cap) {
+    /* list 可能用多条 CLI 消息返回；补换行供上层逐条解析和打印。 */
+    if (s_pending.rsp_len > 0 && s_pending.rsp_len < s_pending.rsp_cap - 1U) {
+        s_pending.rsp[s_pending.rsp_len++] = '\n';
+        s_pending.rsp[s_pending.rsp_len] = '\0';
+    }
+    if (s_pending.rsp_len + tlen + 1U > s_pending.rsp_cap) {
         tlen = s_pending.rsp_cap - s_pending.rsp_len - 1U;
     }
     if (tlen > 0) {
@@ -140,7 +143,12 @@ static void su3_on_pdu(const su3_pdu_info_t *pdu, void *user)
     if (pdu == NULL) {
         return;
     }
-
+    ESP_LOGI(TAG,
+         "PDU: src=0x%02X dst=0x%02X topic=%u pb_len=%u",
+         pdu->src_addr,
+         pdu->dst_addr,
+         (unsigned)pdu->topic,
+         (unsigned)pdu->pb_len);
     if (pdu->topic == SU3_TOPIC_CLI) {
         memset(devid, 0, sizeof(devid));
         if (su3_proto_decode_cli(pdu->pb_data, pdu->pb_len, cmd, sizeof(cmd),

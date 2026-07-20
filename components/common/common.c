@@ -353,7 +353,7 @@ static void su3_pwr_en_init(void)
 	gpio_set_level(SU3_PWR_EN_GPIO, 1);
 	ESP_LOGI(TAG, "SU3 power EN GPIO%d = 1", SU3_PWR_EN_GPIO);
 	/* 错峰：等传感器上电电流回落后再启 BLE/WiFi，减轻 brownout */
-	vTaskDelay(pdMS_TO_TICKS(20000)); /// 感觉硬件问题，20s太长了，后面可以改短点，2s会一直重启
+	vTaskDelay(pdMS_TO_TICKS(10000)); /// 感觉硬件问题，20s太长了，后面可以改短点，2s会一直重启
 	ESP_LOGI(TAG, "SU3 power settle 2000ms done");
 }
 

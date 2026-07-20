@@ -19,7 +19,8 @@
 #include "common.h"
 #include "app_control.h"
 #include "use_uart.h"
-// #include "esp_log.h"
+#include "esp_log.h"
+static const char *TAG = "main";
 
 
 
@@ -44,7 +45,9 @@ void app_main(void)
   // initialize_adc();             //气压采集系统
 
   initialize_ble_server();      //蓝牙初始化
+  ESP_LOGI(TAG, "ble_server init Successfully");
   initialize_wifi();            //wifi初始化
+  ESP_LOGI(TAG, "WiFi init Successfully");
   mfp_gpio_config();
   app_control_server();           //app通信控制系统
 
