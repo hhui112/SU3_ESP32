@@ -63,6 +63,13 @@ extern char last_saved_ssid[32];
 extern char last_saved_passwd[64];
 
 static const char *TAG = "wifi station";
+typedef enum {
+    SENSOR_TARGET_NONE  = 0,
+    SENSOR_TARGET_LEFT  = 1,
+    SENSOR_TARGET_RIGHT = 2,
+    SENSOR_TARGET_BOTH  = 3
+} sensor_target_t;
+
 int s_retry_num = 0;
 static int s_mqtt_retry_num = 0;
 static EventGroupHandle_t s_wifi_event_group;
@@ -84,6 +91,36 @@ wifi_config_t wifi_config = {
             .required = false},
     },
 };
+
+static sensor_target_t parse_sensor_target(
+    const char *request_id,
+    char left_id[20],
+    char right_id[20])
+{
+    /* 原逻辑用子串匹配且只认主控 ID；现精确识别主控及 03/06 分侧 ID。 */
+    const char *base_id = device_info->id;
+
+    if (request_id == NULL ||
+        strlen(base_id) != 15 ||
+        strncmp(base_id, "KSPSBED", 7) != 0) {
+        return SENSOR_TARGET_NONE;
+    }
+
+    snprintf(left_id, 20, "%.7s03%s", base_id, base_id + 9);
+    snprintf(right_id, 20, "%.7s06%s", base_id, base_id + 9);
+
+    if (strcmp(request_id, base_id) == 0) {
+        return SENSOR_TARGET_BOTH;
+    }
+    if (strcmp(request_id, left_id) == 0) {
+        return SENSOR_TARGET_LEFT;
+    }
+    if (strcmp(request_id, right_id) == 0) {
+        return SENSOR_TARGET_RIGHT;
+    }
+
+    return SENSOR_TARGET_NONE;
+}
 
 //wifi操作函数
 static void event_handler(void *arg, esp_event_base_t event_base,
@@ -152,6 +189,87 @@ static void event_handler(void *arg, esp_event_base_t event_base,
 
 
 //mqtt操作函数
+static void publish_sensor_cli_reply(
+    const char *id,
+    const char *side,
+    const char *cmd,
+    const char *back,
+    int result)
+{
+    /* 原双侧命令共用一份回包；现携带分侧 ID、side 和执行结果分别上报。 */
+    cJSON *root = cJSON_CreateObject();
+
+    if (root == NULL) {
+        return;
+    }
+
+    cJSON_AddStringToObject(root, "id", id);
+    cJSON_AddNumberToObject(root, "ts", device_info->utc.time_stamp);
+    cJSON_AddStringToObject(root, "side", side);
+    cJSON_AddStringToObject(root, "cmd", cmd);
+    cJSON_AddStringToObject(root, "back", back != NULL ? back : "");
+    cJSON_AddNumberToObject(root, "result", result);
+
+    char *json = cJSON_PrintUnformatted(root);
+
+    if (json != NULL) {
+        esp_mqtt_client_publish(client,
+                                user_cli_data_publish_topic,
+                                json,
+                                strlen(json),
+                                0,
+                                0);
+        free(json);
+    }
+
+    cJSON_Delete(root);
+}
+
+static void publish_selected_sensor_replies(
+    sensor_target_t target,
+    const char *left_id,
+    const char *right_id,
+    const char *cmd,
+    const char *back,
+    int result)
+{
+    if (target & SENSOR_TARGET_LEFT) {
+        publish_sensor_cli_reply(left_id, "L", cmd, back, result);
+    }
+    if (target & SENSOR_TARGET_RIGHT) {
+        publish_sensor_cli_reply(right_id, "R", cmd, back, result);
+    }
+}
+
+static bool execute_sensor_cli_command(
+    sensor_target_t target,
+    const char *left_id,
+    const char *right_id,
+    const char *cmd)
+{
+    /* 原命令固定发往左侧或隐式双发；现按目标逐侧执行并保留各自响应。 */
+    char response[1024];
+    bool any_success = false;
+
+    if (target & SENSOR_TARGET_LEFT) {
+        memset(response, 0, sizeof(response));
+        int result = set_bc_side(BC_SENSOR_SIDE_LEFT, cmd, response,
+                                 sizeof(response), 1000);
+        publish_sensor_cli_reply(left_id, "L", cmd, response, result);
+        any_success |= (result == 0);
+    }
+
+    if (target & SENSOR_TARGET_RIGHT) {
+        memset(response, 0, sizeof(response));
+        int result = set_bc_side(BC_SENSOR_SIDE_RIGHT, cmd, response,
+                                 sizeof(response), 1000);
+        publish_sensor_cli_reply(right_id, "R", cmd, response, result);
+        any_success |= (result == 0);
+    }
+
+    return any_success;
+}
+
 static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data)
 {
     // printf("Event dispatched from event loop base=%s, event_id=%d \n", base, event_id);
@@ -317,40 +435,49 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
             printf("%s\n", msg->data);
             if (firstItem)
             {
-                secondItem = cJSON_GetObjectItem(firstItem, "id");
-                if (secondItem && strstr(secondItem->valuestring, device_info->id))
-                {
-                    secondItem = cJSON_GetObjectItem(firstItem, "type");
+                cJSON *id_item = cJSON_GetObjectItem(firstItem, "id");
+                cJSON *type_item = cJSON_GetObjectItem(firstItem, "type");
+                char left_id[20] = {0};
+                char right_id[20] = {0};
+                sensor_target_t target = SENSOR_TARGET_NONE;
 
-                    if(secondItem && strstr(secondItem->valuestring, "sensorCli"))
+                /* 先校验字段类型和目标 ID，避免空字段或相似 ID 被误处理。 */
+                if (cJSON_IsString(id_item) && cJSON_IsString(type_item)) {
+                    target = parse_sensor_target(id_item->valuestring,
+                                                 left_id, right_id);
+                }
+
+                if (target != SENSOR_TARGET_NONE)
+                {
+                    secondItem = type_item;
+
+                    if (strcmp(secondItem->valuestring, "sensorCli") == 0)
                     {
-                        if(get_devic_id_flag() == 0)
-                        {
-                            sprintf(temp,"{\"id\":\"%s\",\"ts\":%d,\"cmd\":%s,\"back\":\"no sensor id,wait two min again\"}", 
-                                device_info->id,
-                                device_info->utc.time_stamp,
-                                secondItem->valuestring);
-                            esp_mqtt_client_publish(client, user_cli_data_publish_topic, (char *)temp, strlen((char *)temp), 0, 0);      
-                        }
-                        else
-                        {
-                            secondItem = cJSON_GetObjectItem(firstItem, "cmd");   
-                            if(secondItem && strstr(secondItem->valuestring, "report "))
+                        
+                        if (get_devic_id_flag() == 0) {
+                            // publish_selected_sensor_replies(
+                            //     target, left_id, right_id, secondItem->valuestring,
+                            //     "no sensor id, wait two minutes and retry", -1);
+                        } else {
+                            secondItem = cJSON_GetObjectItem(firstItem, "cmd");
+                            if (strncmp(secondItem->valuestring, "report ", 7) == 0)
                             {
                                 if(get_sleep_up_flag() == 1)
                                 {
-                                    sprintf(temp,"{\"id\":\"%s\",\"ts\":%d,\"cmd\":%s,\"back\":\"report uping now,wait two min again\"}", 
-                                    device_info->id,
-                                    device_info->utc.time_stamp,
-                                    secondItem->valuestring);
-                                    esp_mqtt_client_publish(client, user_cli_data_publish_topic, (char *)temp, strlen((char *)temp), 0, 0);
-
+                                    // publish_selected_sensor_replies(
+                                    //     target, left_id, right_id, secondItem->valuestring,
+                                    //     "report upload in progress", -1);
+                                }
+                                else if (secondItem->valuestring[7] == '\0') {
+                                    // publish_selected_sensor_replies(
+                                    //     target, left_id, right_id, secondItem->valuestring,
+                                    //     "missing report number", -1);
                                 }
                                 else{
 
                                     //发送报告名test
                                     sprintf(temp, "{\"id\":\"%s\",\"ts\":%d,\"type\":4,\"report\":\"%s\",\"data\":\"%s\"}",
-                                                                                        device_info->id,
+                                                                                        id_item->valuestring,
                                                                                         device_info->utc.time_stamp,
                                                                                         &secondItem->valuestring[7],
                                                                                         &secondItem->valuestring[7]);
@@ -361,40 +488,30 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                                     uint8_t report_num =  atoi(&secondItem->valuestring[7]);
                                     printf("report_num %d\n",report_num);
                                     set_sleep_up_flag(1);
-                                    set_cli_report_name(&secondItem->valuestring[7],strlen((char *)&secondItem->valuestring[7]));                                   
-                                    set_report_cli(2,report_num);
+                                    set_cli_report_name(&secondItem->valuestring[7],
+                                                        strlen(&secondItem->valuestring[7]));
+                                    set_report_cli_target(2, report_num, (uint8_t)target);
+                                    // publish_selected_sensor_replies(
+                                    //     target, left_id, right_id, secondItem->valuestring,
+                                    //     "queued", 0);
                                 }
 
                             }
-                            else if (secondItem&&strstr(secondItem->valuestring, "reboot"))
+                            else if (strcmp(secondItem->valuestring, "reboot") == 0)
                             {
-                                char return_value[1024] = {0};
-                                set_bc(device_info->utc.time_stamp, secondItem->valuestring, 1, 0, return_value, 1000);
-                                sprintf(temp,"{\"id\":\"%s\",\"ts\":%d,\"cmd\":%s,\"back\":\"%s\"}", 
-                                    device_info->id,
-                                    device_info->utc.time_stamp,
-                                    secondItem->valuestring,
-                                    return_value);
-                                printf("%s\n",temp);
-                                esp_mqtt_client_publish(client, user_cli_data_publish_topic, (char *)temp, strlen((char *)temp), 0, 0);
-                                if(strncmp(return_value, "ok",2) == 0)
-                                {
+                                if (execute_sensor_cli_command(
+                                        target, left_id, right_id,
+                                        secondItem->valuestring)) {
                                     sensor_reboot_config();
                                 }
                             }
                             else if (secondItem&&strstr(secondItem->valuestring, "set mode 0"))     // xinzeng：如果是set mode 0强制生成报告，则将报告上传到阿里云
                             {
-                                char return_value[1024] = {0};
-                                set_bc(device_info->utc.time_stamp, secondItem->valuestring, 1, 0, return_value, 1000);
-                                sprintf(temp,"{\"id\":\"%s\",\"ts\":%d,\"cmd\":%s,\"back\":\"%s\"}", 
-                                    device_info->id,
-                                    device_info->utc.time_stamp,
-                                    secondItem->valuestring,
-                                    return_value);
-                                printf("%s\n",temp);
-                                esp_mqtt_client_publish(client, user_cli_data_publish_topic, (char *)temp, strlen((char *)temp), 0, 0);
+                                bool success = execute_sensor_cli_command(
+                                    target, left_id, right_id,
+                                    secondItem->valuestring);
                                 // printf("什么意思？\n");
-                               if(strncmp(return_value, "ok",2) == 0)
+                               if (success)
                                 {
                                     vTaskDelay(2000 / portTICK_PERIOD_MS);      // 等待2S 报告生成
                                     set_mode_flag_config(0);
@@ -402,26 +519,16 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                             }
                             else
                             {
-                                char return_value[1024] = {0};
-                                int ddss;
-                                int64_t start_time = esp_timer_get_time(); 
-                                set_bc(device_info->utc.time_stamp, secondItem->valuestring, 1, 0, return_value, 1000);
-                                int64_t end_time = esp_timer_get_time();
-                                printf("set bc time = %lld ms\n", (end_time - start_time)/1000);
-                                // printf("%s\n",return_value);
-                                sprintf(temp,"{\"id\":\"%s\",\"ts\":%d,\"cmd\":%s,\"back\":\"%s\"}", 
-                                    device_info->id,
-                                    device_info->utc.time_stamp,
-                                    secondItem->valuestring,
-                                    return_value);
-                                printf("%s\n",temp);
-                                ddss=esp_mqtt_client_publish(client, user_cli_data_publish_topic, (char *)temp, strlen((char *)temp), 0, 0);
-                                printf("ddss=%d\n",ddss);
+                                (void)execute_sensor_cli_command(
+                                    target, left_id, right_id,
+                                    secondItem->valuestring);
                            }
 
                         }
                     }
-                    else if (secondItem&&strstr(secondItem->valuestring, "deviceCli"))
+                    /* 设备级命令只接受主控 ID，防止分侧 ID 误操作整机。 */
+                    else if (target == SENSOR_TARGET_BOTH &&
+                             strcmp(secondItem->valuestring, "deviceCli") == 0)
                     {
                         secondItem = cJSON_GetObjectItem(firstItem, "cmd");
                        if(secondItem && strstr(secondItem->valuestring, "dataUpSwitch"))
@@ -487,7 +594,9 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
                             }
                        }
                        
-                    }else if(secondItem && strstr(secondItem->valuestring, "mcCli"))
+                    /* 控制盒命令同属整机操作，仅允许主控 ID 下发。 */
+                    } else if (target == SENSOR_TARGET_BOTH &&
+                               strcmp(secondItem->valuestring, "mcCli") == 0)
                     {
                         // printf("mqtt mqtt received to: mcCli\n");
                         if(get_devic_id_flag() == 0)

@@ -38,6 +38,8 @@
 // ======================================================
 
 #define UP_RATIO_60S    12   // 60s上报一次需改为12
+#define SU3_REPORT_SIDE_TIMEOUT_MS 1500U
+#define SU3_REPORT_INTER_SIDE_MS     200U
 
 static const char *TAG = "control";
 extern device_info_t *device_info;
@@ -65,7 +67,10 @@ char json_report_name[32] = {0};
 static char device_id[12] = {0},device_version[32] = {0},set_rtc_flag = 0,devic_id_flag = 0;   //bc重启后将两个标志位置零，重新设置addr与rtc 
 static char sleep_up_flag = 0,ota_now_flag = 0;//sleep_up睡眠报告上传进行中、esp32固件升级
 static uint8_t set_mode_flag = 2;   // xinzeng:set_mode_flag 强制生成报告
-static char report_cli_data[2]={0},cli_report_name[32]={0};
+static char report_cli_data[3] = {0};
+static char cli_report_name[32] = {0};
+static TaskHandle_t s_report_wait_task;
+static volatile int s_report_wait_side = -1;
 static snore_parameters_t snore_parameters_demo = {0};    //打鼾干预延时流程参数
 static uint32_t snore_blocked_until_s = 0;                //闹钟指令后 120s 内禁止打鼾干预（开机秒数）
 
@@ -98,10 +103,16 @@ static uint8_t g_MFP_Parsed_Frame[256];      // 存储最近一次完整解析�
 static uint16_t g_MFP_Parsed_Len = 0;        // 已解析帧的长度
 static SemaphoreHandle_t g_MFP_Parsed_Mutex = NULL;  // 线程安全保护
 
-void set_cli_report_name(char* data,char len)
+void set_cli_report_name(const char *data, size_t len)
 {
+    size_t copy_len = len < sizeof(cli_report_name) - 1
+                          ? len
+                          : sizeof(cli_report_name) - 1;
+
     memset(cli_report_name, 0, 32);
-    memcpy(cli_report_name,data,len);
+    if (data != NULL) {
+        memcpy(cli_report_name, data, copy_len);
+    }
 }
 static void report_cli_up(void)   //指令下发
 {
@@ -122,11 +133,46 @@ static void report_cli_up(void)   //指令下发
         // sleep_up_flag = 1;
         memset(json_report_name, 0, 32);
         strcpy(json_report_name,cli_report_name);
-        set_bc(device_info->utc.time_stamp, get_report_cmd2, 0, 0, NULL, 50);   //睡眠报告上传云端
+        for (int side = SU3_SIDE_LEFT; side <= SU3_SIDE_RIGHT; side++) {
+            uint8_t target_bit = (side == SU3_SIDE_LEFT)
+                                     ? BC_SENSOR_TARGET_LEFT
+                                     : BC_SENSOR_TARGET_RIGHT;
+            if ((report_cli_data[2] & target_bit) == 0) {
+                continue;
+            }
+
+            /* Drain a stale completion before registering this transaction. */
+            (void)ulTaskNotifyTake(pdTRUE, 0);
+            s_report_wait_task = xTaskGetCurrentTaskHandle();
+            s_report_wait_side = side;
+
+            esp_err_t err = su3_cli_fire(
+                su3_side_to_addr((su3_side_t)side), get_report_cmd2);
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG, "[SU3_REPORT_PULL] TX failed side=%d cmd=\"%s\" err=%s",
+                         side, get_report_cmd2, esp_err_to_name(err));
+            } else {
+                ESP_LOGI(TAG, "[SU3_REPORT_PULL] TX side=%d cmd=\"%s\"", side,
+                         get_report_cmd2);
+                if (ulTaskNotifyTake(pdTRUE,
+                        pdMS_TO_TICKS(SU3_REPORT_SIDE_TIMEOUT_MS)) == 0) {
+                    ESP_LOGW(TAG, "[SU3_REPORT_PULL] timeout side=%d cmd=\"%s\"",
+                             side, get_report_cmd2);
+                } else {
+                    ESP_LOGI(TAG, "[SU3_REPORT_PULL] complete side=%d cmd=\"%s\"",
+                             side, get_report_cmd2);
+                }
+            }
+
+            s_report_wait_side = -1;
+            s_report_wait_task = NULL;
+            vTaskDelay(pdMS_TO_TICKS(SU3_REPORT_INTER_SIDE_MS));
+        }
         
         //vTaskDelay(60 * 1000 / portTICK_PERIOD_MS);
         sleep_up_flag = 0;
         report_cli_data[0] = 0;
+        report_cli_data[2] = 0;
         break;
   
     default:
@@ -532,9 +578,9 @@ void mqtt_data_parser_task(void *pv)
 
 */
 
-void report_to_aliyun(uint8_t type, uint8_t *value, uint16_t len)
+void report_to_aliyun(uint8_t type, uint8_t *value, uint16_t len, const char *report_id)
 {
-    if (!value || len == 0) return;
+    if (!value || len == 0 || report_id == NULL) return;
     uint16_t one_packet_len = 200;   //256;  //128;    //64;   //修改
     uint16_t packet_num = len / one_packet_len;
     uint16_t i,j;
@@ -551,7 +597,7 @@ void report_to_aliyun(uint8_t type, uint8_t *value, uint16_t len)
         {
             printf("ii = %d\n",i);
             firstItem = cJSON_CreateObject();
-            cJSON_AddItemToObject(firstItem,"id",cJSON_CreateString(device_info->id));
+            cJSON_AddItemToObject(firstItem,"id",cJSON_CreateString(report_id));
             cJSON_AddItemToObject(firstItem,"ts",cJSON_CreateNumber(device_info->utc.time_stamp));
             cJSON_AddItemToObject(firstItem,"type",cJSON_CreateNumber(type));
             cJSON_AddItemToObject(firstItem,"report",cJSON_CreateString(json_report_name));
@@ -599,7 +645,7 @@ void report_to_aliyun(uint8_t type, uint8_t *value, uint16_t len)
         
         printf("i = %d\n",i);
         firstItem = cJSON_CreateObject();
-        cJSON_AddItemToObject(firstItem,"id",cJSON_CreateString(device_info->id));
+        cJSON_AddItemToObject(firstItem,"id",cJSON_CreateString(report_id));
         cJSON_AddItemToObject(firstItem,"ts",cJSON_CreateNumber(device_info->utc.time_stamp));
         cJSON_AddItemToObject(firstItem,"type",cJSON_CreateNumber(type));
         cJSON_AddItemToObject(firstItem,"report",cJSON_CreateString(json_report_name));
@@ -780,6 +826,32 @@ int set_bc(uint32_t time_stamp, char *value, uint8_t switch_return, uint8_t swit
         char rsp2[256];
         (void)su3_cli_exec(right, value, rsp2, sizeof(rsp2), time_ms);
     }
+    return (err == ESP_OK) ? 0 : -1;
+}
+int set_bc_side(uint8_t side, const char *cmd,
+                char *response, size_t response_size,
+                uint16_t timeout_ms)
+{
+    if (!su3_is_ready() || cmd == NULL ||
+        response == NULL || response_size == 0) {
+        return -1;
+    }
+
+    su3_side_t su3_side;
+
+    if (side == BC_SENSOR_SIDE_LEFT) {
+        su3_side = SU3_SIDE_LEFT;
+    } else if (side == BC_SENSOR_SIDE_RIGHT) {
+        su3_side = SU3_SIDE_RIGHT;
+    } else {
+        return -1;
+    }
+
+    su3_addr_t target = su3_side_to_addr(su3_side);
+
+    esp_err_t err = su3_cli_exec(target, cmd, response,
+                                 response_size, timeout_ms);
+
     return (err == ESP_OK) ? 0 : -1;
 }
 
@@ -2137,10 +2209,10 @@ void vlsit_task(void *pv){
 
 #if SU3_USE_NEW_STACK
 #define SU3_SETUP_CMD_TIMEOUT_MS 3000U
-#define SU3_LIST_TEST_ENABLE     1
+#define SU3_LIST_TEST_ENABLE     0
 #define SU3_LIST_TIMEOUT_MS      3000U
 #define SU3_LIST_POLL_MS         (60U * 1000U)
-#define SU3_REPORT_ZERO_TEST_ENABLE 1
+#define SU3_REPORT_ZERO_TEST_ENABLE 0
 #define SU3_REPORT_RX_SETTLE_MS  5000U
 
 static char s_su3_devic_id_flag;
@@ -2209,7 +2281,10 @@ static void su3_publish_json(const char *topic, const char *json)
     if (topic == NULL || json == NULL) {
         return;
     }
-    if (get_mqtt_status() && device_info->data_up_switch && sleep_up_flag == 0) {
+    bool is_sleep_report = user_sleep_data_publish_topic[0] != '\0' &&
+                           strcmp(topic, user_sleep_data_publish_topic) == 0;
+    if (get_mqtt_status() && device_info->data_up_switch &&
+        (sleep_up_flag == 0 || is_sleep_report)) {
         if (mqtt_send_mutex) {
             mqtt_send_mutex = false;
             esp_mqtt_client_publish(client, topic, json, strlen(json), 0, 0);
@@ -2248,36 +2323,31 @@ static void su3_on_topic(su3_addr_t src, uint8_t topic,
     int idx = su3_side_index(src);
     char side_ch;
     char json[512];
+    char report_id[sizeof(device_info->id)];
     (void)user;
 
     if (idx < 0 || pb_data == NULL) {
         return;
     }
     side_ch = (idx == SU3_SIDE_LEFT) ? 'L' : 'R';
+    snprintf(report_id, sizeof(report_id), "%s", device_info->id);
+
+    /* 左路使用 03，右路使用 06，保留主控 ID 的其余部分。 */
+    if (strlen(report_id) == 15 &&
+        strncmp(report_id, "KSPSBED", 7) == 0) {
+        if (idx == SU3_SIDE_LEFT) {
+            memcpy(report_id + 7, "03", 2);
+        } else if (idx == SU3_SIDE_RIGHT) {
+            memcpy(report_id + 7, "06", 2);
+        }
+    }
 
     if (topic == SU3_TOPIC_SENSOR_1SEC) {
         qs_pb_msg_sensor_1sec_info msg;
         memset(&msg, 0, sizeof(msg));
-        // if (qs_pb_sensor_1sec_info_decode((char *)pb_data, pb_len, &msg) != QS_SUCCESS) {
-        //     return;
-        // }
-        /* 解析1秒实时数据 */
-        /* 解析1秒实时数据 */
-        qs_ret_code_t ret = qs_pb_sensor_1sec_info_decode(
-            (char *)pb_data,
-            pb_len,
-            &msg
-        );
-
-        // if (ret != QS_SUCCESS) {
-        //     ESP_LOGE(TAG,
-        //             "SU3 1s decode failed: src=0x%02X len=%u ret=%d",
-        //             src,
-        //             (unsigned)pb_len,
-        //             (int)ret);
-        //     return;
-        // }
-
+        if (qs_pb_sensor_1sec_info_decode((char *)pb_data, pb_len, &msg) != QS_SUCCESS) {
+            return;
+        }
         /* 解析成功后打印字段 */
         // ESP_LOGI(TAG,
         //      "SU3 1s decode ok: id=%s ts=%d seq=%d "
@@ -2311,10 +2381,10 @@ static void su3_on_topic(su3_addr_t src, uint8_t topic,
         snprintf(json, sizeof(json),
                  "{\"id\":\"%s\",\"ts\":%d,\"type\":1,\"side\":\"%c\",\"sensor\":%u,"
                  "\"data\":{\"sensor_ts\":%d,\"heart\":%d,\"breath\":%d,\"status\":%d,"
-                 "\"sdata\":%d,\"pdata\":%d,\"sign\":%d}}",
-                 device_info->id, device_info->utc.time_stamp, side_ch, (unsigned)src,
+                 "\"sdata\":%d,\"pdata\":%d,\"sign\":%d, \"sthd\":%d, \"pthd\":%d, \"sequence\":%d}}",
+                 report_id, device_info->utc.time_stamp, side_ch, (unsigned)src,
                  (int)msg.timestamp, msg.heartbeat, msg.breath_rate, msg.status,
-                 msg.sdata, msg.pdata, msg.sign);
+                 msg.sdata, msg.pdata, msg.sign, msg.sthd, msg.pthd, msg.sequence);
         su3_publish_json(user_5s_data_publish_topic, json);
         g_su3_sensor[idx].fresh_1s = false;
         return;
@@ -2335,7 +2405,7 @@ static void su3_on_topic(su3_addr_t src, uint8_t topic,
                  "{\"id\":\"%s\",\"ts\":%d,\"type\":2,\"side\":\"%c\",\"sensor\":%u,"
                  "\"data\":{\"sensor_ts\":%d,\"bed\":%d,\"heart\":%d,\"breath\":%d,"
                  "\"Mmin\":%d,\"Mmean\":%d,\"NSD\":%d,\"NPD\":%d,\"SBP\":%d,\"DBP\":%d}}",
-                 device_info->id, device_info->utc.time_stamp, side_ch, (unsigned)src,
+                 report_id, device_info->utc.time_stamp, side_ch, (unsigned)src,
                  (int)msg.timestamp, msg.on_off_bed, msg.heartbeat, msg.breath_rate,
                  msg.Mmin, msg.Mmean, msg.NSD, msg.Npd, msg.SBP, msg.DBP);
         su3_publish_json(user_60s_data_publish_topic, json);
@@ -2353,7 +2423,7 @@ static void su3_on_topic(su3_addr_t src, uint8_t topic,
         snprintf(json, sizeof(json),
                  "{\"id\":\"%s\",\"ts\":%d,\"type\":15,\"side\":\"%c\",\"sensor\":%u,"
                  "\"data\":{\"status_flag\":%d}}",
-                 device_info->id, device_info->utc.time_stamp, side_ch, (unsigned)src,
+                 report_id, device_info->utc.time_stamp, side_ch, (unsigned)src,
                  msg.status_flag);
         su3_publish_json(user_sa_data_publish_topic, json);
         return;
@@ -2386,7 +2456,7 @@ static void su3_on_topic(su3_addr_t src, uint8_t topic,
                  "\"sleepEfficiency\":%d,\"sleepQuality\":%d,\"turnoverTimes\":%d,"
                  "\"sleepLatency\":%d,\"offBedTimes\":%d,\"cRSD\":%d,\"slop1\":%d,"
                  "\"slop2\":%d,\"osaTimes\":%d,\"avgSA\":%d,\"maxSA\":%d}}",
-                 device_info->id, device_info->utc.time_stamp, json_report_name, side_ch,
+                 report_id, device_info->utc.time_stamp, json_report_name, side_ch,
                  msg.cal_result, msg.start_time, msg.total_sleep_time,
                  msg.sleep_efficiency, msg.sleep_quality, msg.turnover_times,
                  msg.sleep_latency, msg.off_bed_times, msg.cRSD, msg.slop1,
@@ -2401,7 +2471,7 @@ static void su3_on_topic(su3_addr_t src, uint8_t topic,
         if (qs_pb_state_raw_data_decode((char *)pb_data, pb_len, &msg) == QS_SUCCESS) {
             if (su3_log_report_raw(idx, topic, "sleep_state", msg.device_id,
                                    msg.timestamp, msg.data, msg.data_len)) {
-                report_to_aliyun(topic, msg.data, (uint16_t)msg.data_len);
+                report_to_aliyun(topic, msg.data, (uint16_t)msg.data_len, report_id);
             }
         } else {
             ESP_LOGE(TAG, "[SU3_REPORT] topic=6 decode failed side=%d len=%u",
@@ -2415,7 +2485,7 @@ static void su3_on_topic(su3_addr_t src, uint8_t topic,
         if (qs_pb_heartbeat_raw_data_decode((char *)pb_data, pb_len, &msg) == QS_SUCCESS) {
             if (su3_log_report_raw(idx, topic, "heart_rate", msg.device_id,
                                    msg.timestamp, msg.data, msg.data_len)) {
-                report_to_aliyun(topic, msg.data, (uint16_t)msg.data_len);
+                report_to_aliyun(topic, msg.data, (uint16_t)msg.data_len, report_id);
             }
         } else {
             ESP_LOGE(TAG, "[SU3_REPORT] topic=7 decode failed side=%d len=%u",
@@ -2429,7 +2499,7 @@ static void su3_on_topic(su3_addr_t src, uint8_t topic,
         if (qs_pb_breathrate_raw_data_decode((char *)pb_data, pb_len, &msg) == QS_SUCCESS) {
             if (su3_log_report_raw(idx, topic, "breath_rate_x10", msg.device_id,
                                    msg.timestamp, msg.data, msg.data_len)) {
-                report_to_aliyun(topic, msg.data, (uint16_t)msg.data_len);
+                report_to_aliyun(topic, msg.data, (uint16_t)msg.data_len, report_id);
             }
         } else {
             ESP_LOGE(TAG, "[SU3_REPORT] topic=8 decode failed side=%d len=%u",
@@ -2443,7 +2513,7 @@ static void su3_on_topic(su3_addr_t src, uint8_t topic,
         if (qs_pb_movement_raw_data_decode((char *)pb_data, pb_len, &msg) == QS_SUCCESS) {
             if (su3_log_report_raw(idx, topic, "movement", msg.device_id,
                                    msg.timestamp, msg.data, msg.data_len)) {
-                report_to_aliyun(topic, msg.data, (uint16_t)msg.data_len);
+                report_to_aliyun(topic, msg.data, (uint16_t)msg.data_len, report_id);
             }
         } else {
             ESP_LOGE(TAG, "[SU3_REPORT] topic=9 decode failed side=%d len=%u",
@@ -2457,7 +2527,7 @@ static void su3_on_topic(su3_addr_t src, uint8_t topic,
         if (qs_pb_snore_raw_data_decode((char *)pb_data, pb_len, &msg) == QS_SUCCESS) {
             if (su3_log_report_raw(idx, topic, "snore", msg.device_id,
                                    msg.timestamp, msg.data, msg.data_len)) {
-                report_to_aliyun(topic, msg.data, (uint16_t)msg.data_len);
+                report_to_aliyun(topic, msg.data, (uint16_t)msg.data_len, report_id);
             }
         } else {
             ESP_LOGE(TAG, "[SU3_REPORT] topic=10 decode failed side=%d len=%u",
@@ -2471,7 +2541,7 @@ static void su3_on_topic(su3_addr_t src, uint8_t topic,
         if (qs_pb_sbp_raw_data_decode((char *)pb_data, pb_len, &msg) == QS_SUCCESS) {
             if (su3_log_report_raw(idx, topic, "sbp", msg.device_id,
                                    msg.timestamp, msg.data, msg.data_len)) {
-                report_to_aliyun(topic, msg.data, (uint16_t)msg.data_len);
+                report_to_aliyun(topic, msg.data, (uint16_t)msg.data_len, report_id);
             }
         } else {
             ESP_LOGE(TAG, "[SU3_REPORT] topic=11 decode failed side=%d len=%u",
@@ -2485,11 +2555,14 @@ static void su3_on_topic(su3_addr_t src, uint8_t topic,
         if (qs_pb_dbp_raw_data_decode((char *)pb_data, pb_len, &msg) == QS_SUCCESS) {
             if (su3_log_report_raw(idx, topic, "dbp", msg.device_id,
                                    msg.timestamp, msg.data, msg.data_len)) {
-                report_to_aliyun(topic, msg.data, (uint16_t)msg.data_len);
+                report_to_aliyun(topic, msg.data, (uint16_t)msg.data_len, report_id);
             }
         } else {
             ESP_LOGE(TAG, "[SU3_REPORT] topic=12 decode failed side=%d len=%u",
                      idx, (unsigned)pb_len);
+        }
+        if (s_report_wait_side == idx && s_report_wait_task != NULL) {
+            xTaskNotifyGive(s_report_wait_task);
         }
         return;
     }
@@ -2771,8 +2844,14 @@ uint8_t get_ota_now_flag(void)
 //report_cli_data设置指令代码＋数据
 void set_report_cli(uint8_t data1,uint8_t data2)
 {
+    set_report_cli_target(data1, data2, BC_SENSOR_TARGET_LEFT);
+}
+
+void set_report_cli_target(uint8_t data1, uint8_t data2, uint8_t target)
+{
     report_cli_data[0] = data1;
     report_cli_data[1] = data2;
+    report_cli_data[2] = target & BC_SENSOR_TARGET_BOTH;
 }
 uint8_t get_devic_id_flag(void)
 {
