@@ -31,7 +31,7 @@ esp_err_t su3_proto_encode_cli(const char *device_id, int32_t timestamp,
     if (device_id != NULL && device_id[0] != '\0') {
         strncpy(msg.device_id, device_id, sizeof(msg.device_id) - 1U);
     } else {
-        strncpy(msg.device_id, "SU20000001", sizeof(msg.device_id) - 1U);
+        strncpy(msg.device_id, "UNCONFIGED", sizeof(msg.device_id) - 1U);
     }
     strncpy(msg.command, command, sizeof(msg.command) - 1U);
     msg.timestamp = timestamp;

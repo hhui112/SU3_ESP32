@@ -60,20 +60,49 @@ static void su3_store_peer_id(su3_addr_t src, const char *device_id)
     if (side >= SU3_SIDE_COUNT || device_id == NULL || device_id[0] == '\0') {
         return;
     }
+    /* 已固定主芯片 id 后不再用回包学习（传感器回包 deviceID 可能截断） */
+    if (s_cfg.device_id[0] != '\0') {
+        return;
+    }
     strncpy(s_peer_id[side], device_id, sizeof(s_peer_id[side]) - 1U);
     s_peer_id[side][sizeof(s_peer_id[side]) - 1U] = '\0';
+    ESP_LOGD(TAG, "peer_id learn side=%d src=0x%02X id=\"%s\"",
+             (int)side, src, s_peer_id[side]);
 }
 
 static const char *su3_device_id_for_dest(su3_addr_t dest)
 {
     su3_side_t side = su3_addr_to_side(dest);
-    if (side < SU3_SIDE_COUNT && s_peer_id[side][0] != '\0') {
-        return s_peer_id[side];
-    }
+    su3_side_t other;
+
+    /* 主芯片统一 id（set devid 后写入），左右共用 */
     if (s_cfg.device_id[0] != '\0') {
         return s_cfg.device_id;
     }
-    return "SU20000001";
+    if (side < SU3_SIDE_COUNT && s_peer_id[side][0] != '\0') {
+        return s_peer_id[side];
+    }
+    if (side < SU3_SIDE_COUNT) {
+        other = (side == SU3_SIDE_LEFT) ? SU3_SIDE_RIGHT : SU3_SIDE_LEFT;
+        if (s_peer_id[other][0] != '\0') {
+            return s_peer_id[other];
+        }
+    }
+    return "UNCONFIGED";
+}
+
+void su3_set_cli_device_id(const char *device_id)
+{
+    if (device_id == NULL || device_id[0] == '\0') {
+        return;
+    }
+    strncpy(s_cfg.device_id, device_id, sizeof(s_cfg.device_id) - 1U);
+    s_cfg.device_id[sizeof(s_cfg.device_id) - 1U] = '\0';
+    for (int i = 0; i < (int)SU3_SIDE_COUNT; i++) {
+        strncpy(s_peer_id[i], s_cfg.device_id, sizeof(s_peer_id[i]) - 1U);
+        s_peer_id[i][sizeof(s_peer_id[i]) - 1U] = '\0';
+    }
+    ESP_LOGI(TAG, "cli device_id shared=\"%s\"", s_cfg.device_id);
 }
 
 static void pending_clear(void)
@@ -206,19 +235,31 @@ static esp_err_t su3_send_cli_pdu(su3_addr_t dest, const char *cmd)
     size_t pdu_len = 0;
     size_t frame_len;
     esp_err_t err;
+    const char *devid = su3_device_id_for_dest(dest);
 
-    err = su3_proto_encode_cli(su3_device_id_for_dest(dest), su3_now_ts(), cmd,
+    ESP_LOGD(TAG, "cli TX dest=0x%02X device_id=\"%s\" cmd=\"%s\"",
+             dest, devid ? devid : "", cmd ? cmd : "");
+
+    err = su3_proto_encode_cli(devid, su3_now_ts(), cmd,
                                pdu, sizeof(pdu), &pdu_len);
     if (err != ESP_OK) {
+        ESP_LOGW(TAG, "cli TX encode fail dest=0x%02X err=%s",
+                 dest, esp_err_to_name(err));
         return err;
     }
 
     frame_len = su3_frame_build(s_cfg.self_addr, dest, SU3_MF_SINGLE, pdu, pdu_len,
                                 frame, sizeof(frame));
     if (frame_len == 0) {
+        ESP_LOGW(TAG, "cli TX frame build fail dest=0x%02X", dest);
         return ESP_FAIL;
     }
-    return su3_uart_send_frame(frame, frame_len);
+    err = su3_uart_send_frame(frame, frame_len);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "cli TX uart fail dest=0x%02X err=%s",
+                 dest, esp_err_to_name(err));
+    }
+    return err;
 }
 
 static void su3_check_list_idle(void)
@@ -421,6 +462,8 @@ esp_err_t su3_cli_exec(su3_addr_t dest, const char *cmd,char *rsp, size_t rsp_le
         xSemaphoreTake(s_pending_mutex, portMAX_DELAY);
         pending_clear();
         xSemaphoreGive(s_pending_mutex);
+        ESP_LOGW(TAG, "cli_exec send fail dest=0x%02X err=%s",
+                 dest, esp_err_to_name(err));
         return err;
     }
 
@@ -428,12 +471,16 @@ esp_err_t su3_cli_exec(su3_addr_t dest, const char *cmd,char *rsp, size_t rsp_le
         xSemaphoreTake(s_pending_mutex, portMAX_DELAY);
         pending_clear();
         xSemaphoreGive(s_pending_mutex);
+        ESP_LOGW(TAG, "cli_exec TIMEOUT dest=0x%02X cmd=\"%s\" %ums",
+                 dest, cmd, (unsigned)timeout_ms);
         return ESP_ERR_TIMEOUT;
     }
 
     xSemaphoreTake(s_pending_mutex, portMAX_DELAY);
     pending_clear();
     xSemaphoreGive(s_pending_mutex);
+    ESP_LOGD(TAG, "cli_exec OK dest=0x%02X cmd=\"%s\" back=\"%.64s\"",
+             dest, cmd, rsp);
     return ESP_OK;
 }
 

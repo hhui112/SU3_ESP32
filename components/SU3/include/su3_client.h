@@ -52,6 +52,12 @@ su3_side_t su3_addr_to_side(su3_addr_t addr);
 bool su3_is_ready(void);
 
 /**
+ * 设置双侧 CLI 共用的 CliCommand.deviceID（主芯片 id）。
+ * 通常在左路 set devid 成功后调用。
+ */
+void su3_set_cli_device_id(const char *device_id);
+
+/**
  * 传感器固件 OTA（预留接口，当前未实现）。
  * @return 一律 ESP_ERR_NOT_SUPPORTED
  */

@@ -634,17 +634,24 @@ static void su3_cli_put(const char *id, const char *cmd, const char *back)
 static void su3_cli_one_side(su3_side_t side, const char *cmd, char *rsp, size_t rsp_len, uint32_t timeout_ms)
 {
     su3_addr_t dest = su3_side_to_addr(side);
+    esp_err_t err;
 
     rsp[0] = '\0';
     if (strncmp(cmd, "report", 6) == 0 && (cmd[6] == '\0' || cmd[6] == ' ')) {
         char fire[24];
         snprintf(fire, sizeof(fire), "report %d", atoi(cmd + 6));
-        (void)su3_cli_fire(dest, fire);
+        err = su3_cli_fire(dest, fire);
+        ESP_LOGI(TAG, "cli fire side=%d dest=0x%02X err=%s",
+                 (int)side, dest, esp_err_to_name(err));
         strncpy(rsp, "ok", rsp_len - 1U);
         rsp[rsp_len - 1U] = '\0';
         return;
     }
-    (void)su3_cli_exec(dest, cmd, rsp, rsp_len, timeout_ms);
+    err = su3_cli_exec(dest, cmd, rsp, rsp_len, timeout_ms);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "cli_exec side=%d dest=0x%02X err=%s cmd=\"%s\"",
+                 (int)side, dest, esp_err_to_name(err), cmd ? cmd : "");
+    }
 }
 
 #define SU3_CLI_Q_LEN        4
@@ -2303,7 +2310,8 @@ static void su3_on_topic(su3_addr_t src, uint8_t topic, const uint8_t *pb_data, 
 /**
  * hello 后初始化（禁止在 RX 回调里 su3_cli_exec）：
  * 1) set mode 4 —— 收到 hello 即可发
- * 2) set rtc   —— 等 SNTP(utc.flag) 就绪后发
+ * 2) set devid  —— 仅左路(03)，写入主芯片 aliyun.device_id；双侧 CLI 共用
+ * 3) set rtc   —— 等 SNTP(utc.flag) 就绪后发
  * 左右地址固定 0x33 / 0x36，不再 set addr。
  */
 static void su3_setup_task(void *pv)
@@ -2314,6 +2322,7 @@ static void su3_setup_task(void *pv)
             su3_addr_t dest;
             char rsp[64];
             char rtc_cmd[40];
+            char devid_cmd[48];
             esp_err_t err;
             time_t now_ts;
             struct tm ti_local;
@@ -2330,6 +2339,20 @@ static void su3_setup_task(void *pv)
                 if (err != ESP_OK) {
                     ESP_LOGW(TAG, "setup mode fail side=%d", i);
                     continue;
+                }
+                /* 只对 03(左) set devid；06 与左共用同一 CliCommand.deviceID */
+                if (i == (int)SU3_SIDE_LEFT &&
+                    device_info->aliyun.device_id[0] != '\0') {
+                    snprintf(devid_cmd, sizeof(devid_cmd), "set devid %s",
+                             device_info->aliyun.device_id);
+                    err = su3_cli_exec(dest, devid_cmd, rsp, sizeof(rsp),
+                                       SU3_SETUP_CMD_TIMEOUT_MS);
+                    if (err != ESP_OK) {
+                        ESP_LOGW(TAG, "setup set devid fail id=%s",
+                                 device_info->aliyun.device_id);
+                        continue;
+                    }
+                    su3_set_cli_device_id(device_info->aliyun.device_id);
                 }
                 g_su3_sensor[i].need_setup = false;
             }
