@@ -50,8 +50,7 @@ extern "C" {
 
 /*
  * 帧内地址字节 = (port<<4)|addr（低 4bit=设备地址，高 4bit=端口）。
- * 业务端口固定 0x3；未设址传感器 addr=0 → 0x30；左=3→0x33；右=6→0x36；
- * ESP32 本机按协议示例用 0x37（addr=7 床控网关/主机侧，port=3）。
+ * 业务端口固定 0x3；左固定 0x33、右固定 0x36；ESP32 本机 0x37。
  */
 #define SU3_PORT_BIZ                0x03U
 #define SU3_ADDR_PORT(addr, port)   ((uint8_t)((((port) & 0x0FU) << 4U) | ((addr) & 0x0FU)))
@@ -61,7 +60,6 @@ extern "C" {
 #define SU3_ADDR_ESP32_DEFAULT      SU3_ADDR_PORT(0x07U, SU3_PORT_BIZ) /* 0x37 */
 #define SU3_ADDR_LEFT_DEFAULT       SU3_ADDR_PORT(0x03U, SU3_PORT_BIZ) /* 0x33 */
 #define SU3_ADDR_RIGHT_DEFAULT      SU3_ADDR_PORT(0x06U, SU3_PORT_BIZ) /* 0x36 */
-#define SU3_ADDR_UNSET_DEFAULT      SU3_ADDR_PORT(0x00U, SU3_PORT_BIZ) /* 0x30 hello 前 */
 
 typedef enum {
     SU3_SIDE_LEFT  = 0,
@@ -84,8 +82,8 @@ typedef struct {
     int rx_pin;               /* 默认 26 */
     int baud_rate;            /* 默认 115200，以硬件实测为准 */
     uint8_t self_addr;        /* ESP32 本机地址，默认 0x37 */
-    uint8_t addr_left;        /* 左侧传感器，默认 0x03 */
-    uint8_t addr_right;       /* 右侧传感器，默认 0x06 */
+    uint8_t addr_left;        /* 左侧传感器，默认 0x33 */
+    uint8_t addr_right;       /* 右侧传感器，默认 0x36 */
     char device_id[24];       /* CliCommand.deviceID，可空，后续 hello 填充 */
 } su3_config_t;
 

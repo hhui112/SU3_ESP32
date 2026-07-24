@@ -264,17 +264,16 @@ void config_store_to_flash(void)
 		memcpy(device_info->ota.running_version, out_value, len);
 		len = sizeof(out_value);
 
-		err = nvs_get_str(nvs_config_handler, "report", out_value, &len);
-		if (nvs_config_handler == NULL) {ESP_LOGE("NVS", "NVS handler is not initialized!");}	
-		if (err != ESP_OK) {ESP_LOGE("NVS", "Error getting 'report' string: %s", esp_err_to_name(err));} 
-		else {ESP_LOGI("NVS", "String length: %d, Retrieved string: %s", len, out_value);}
-		//ESP_ERROR_CHECK(nvs_get_str(nvs_config_handler, "report", out_value, &len));
-	
-		memcpy(device_info->report, out_value, len);
-		//report test
-		// strcpy(device_info->report,"29 2023-12-31 13:13:51 559");
-
-		ESP_LOGI(TAG, "report= %s", device_info->report); 
+		/* 左右各一份最新报告进度；device_info->report 镜像左路供 deviceCli */
+		len = sizeof(out_value);
+		memset(out_value, 0, sizeof(out_value));
+		err = nvs_get_str(nvs_config_handler, "report_L", out_value, &len);
+		if (err == ESP_OK && out_value[0] != '\0') {
+			memcpy(device_info->report, out_value, len < sizeof(device_info->report) ? len : sizeof(device_info->report) - 1);
+		} else {
+			memcpy(device_info->report, "NONE", 5);
+		}
+		ESP_LOGI(TAG, "report_L= %s", device_info->report); 
 		printf("snore: up_hold_time_s = %d, threshold_5s = %d, threshold = %d, pwm = %d, tmr = %d\n",
 																									device_info->snore->snore_parameters.up_hold_time_s,
 																									device_info->snore->snore_parameters.threshold_5s,
@@ -309,7 +308,8 @@ void config_store_to_flash(void)
 		ESP_ERROR_CHECK(nvs_set_u8(nvs_config_handler, "otaFlag", device_info->ota.flag));
     	ESP_ERROR_CHECK(nvs_set_str(nvs_config_handler, "version", device_info->ota.running_version));
 
-		ESP_ERROR_CHECK(nvs_set_str(nvs_config_handler, "report", "NONE"));
+		ESP_ERROR_CHECK(nvs_set_str(nvs_config_handler, "report_L", "NONE"));
+		ESP_ERROR_CHECK(nvs_set_str(nvs_config_handler, "report_R", "NONE"));
 		memcpy(device_info->report, "NONE", 5);
 		ESP_ERROR_CHECK(nvs_set_str(nvs_config_handler, "configFlag", "config_1bc"));
 		printf("nvs config update ok. \n");

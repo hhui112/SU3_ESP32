@@ -46,7 +46,7 @@ extern char user_5s_data_publish_topic[64];
 extern char user_60s_data_publish_topic[64];
 extern char user_sa_data_publish_topic[64];
 extern char user_sleep_data_publish_topic[64];
-// extern char user_cli_data_subscribe_topic[64];
+extern char user_cli_data_publish_topic[64];
 extern char mc_cli_data_publish_topic[64];
 
 extern qs_pb_msg_sensor_1min_info *user_60s_sensor_info;
@@ -62,12 +62,10 @@ bool mqtt_send_mutex = true;
 
 char json_report_name[32] = {0};
 
-static char device_id[12] = {0},device_version[32] = {0},set_rtc_flag = 0,devic_id_flag = 0;   //bc重启后将两个标志位置零，重新设置addr与rtc 
-static char sleep_up_flag = 0,ota_now_flag = 0;//sleep_up睡眠报告上传进行中、esp32固件升级
-static uint8_t set_mode_flag = 2;   // xinzeng:set_mode_flag 强制生成报告
-static char report_cli_data[2]={0},cli_report_name[32]={0};
-static snore_parameters_t snore_parameters_demo = {0};    //打鼾干预延时流程参数
-static uint32_t snore_blocked_until_s = 0;                //闹钟指令后 120s 内禁止打鼾干预（开机秒数）
+static char device_id[12] = {0},device_version[32] = {0},set_rtc_flag = 0;
+static char ota_now_flag = 0;
+static snore_parameters_t snore_parameters_demo = {0}; // 打鼾参数
+static uint32_t snore_blocked_until_s = 0; // 闹钟指令后 120s 内禁止打鼾干预（开机秒数
 
 #define ECHO_TEST_TXD (19)
 #define ECHO_TEST_RXD (25)
@@ -94,78 +92,10 @@ union keys_t   g_keys;
 g_system_flag_t g_system_flag;
 
 // MFP解析缓冲区 - 独立于接收缓冲区,避免数据被清零
-static uint8_t g_MFP_Parsed_Frame[256];      // 存储最近一次完整解析的帧
-static uint16_t g_MFP_Parsed_Len = 0;        // 已解析帧的长度
-static SemaphoreHandle_t g_MFP_Parsed_Mutex = NULL;  // 线程安全保护
+static uint8_t g_MFP_Parsed_Frame[256];
+static uint16_t g_MFP_Parsed_Len = 0;
+static SemaphoreHandle_t g_MFP_Parsed_Mutex = NULL;
 
-void set_cli_report_name(char* data,char len)
-{
-    memset(cli_report_name, 0, 32);
-    memcpy(cli_report_name,data,len);
-}
-static void report_cli_up(void)   //指令下发
-{
-    // return_value[1024] = {0};
-    // char get_report_cmd1[]="list";
-    char get_report_cmd2[12]={0};
-    switch (report_cli_data[0])
-    {
-    // case 1:
-    //     printf("get_report_cmd1");
-    //     set_bc(device_info->utc.time_stamp, get_report_cmd1, 1, 1, return_value, 50);  //获取list列表
-    //     printf("ble_test list %s",return_value);
-    //     report_cli_data[0] = 0;
-    //     break;
-    case 2:   //睡眠报告上传指令
-        sprintf(get_report_cmd2, "report %d",report_cli_data[1]);
-        printf("get_report_cmd2 %s\n", get_report_cmd2);
-        // sleep_up_flag = 1;
-        memset(json_report_name, 0, 32);
-        strcpy(json_report_name,cli_report_name);
-        set_bc(device_info->utc.time_stamp, get_report_cmd2, 0, 0, NULL, 50);   //睡眠报告上传云端
-        
-        //vTaskDelay(60 * 1000 / portTICK_PERIOD_MS);
-        sleep_up_flag = 0;
-        report_cli_data[0] = 0;
-        break;
-  
-    default:
-        break;
-    }
-}
-/*
-    static void bochuang_test(uint8_t data1,uint8_t data2)
-    {
-        char return_value[1024] = {0};
-        char get_report_cmd1[]="list";
-
-        switch (data1)
-        {
-        case 1:
-            printf("get_report_cmd1");
-            set_bc(device_info->utc.time_stamp, get_report_cmd1, 1, 1, return_value, 50);  //获取list列表
-            printf("ble_test list %s",return_value);
-            data1 = 0;
-            break;
-        case 2:
-            if(sleep_up_flag == 0)
-            {
-                sleep_up_flag = 1;
-                report_cli_data[0]=data1;
-                report_cli_data[1]=data2;
-            }
-            else
-            {
-                printf("sleep_uping now/n");
-            }
-            data1 = 0;
-            break;
-    
-        default:
-            break;
-        }
-    }
-*/
 //蓝牙数据解析
 int ble_data_parser_cb(uint8_t *data)
 {
@@ -287,21 +217,6 @@ else if (data[0] == 0x33 && data[1]==0x44 && data[2]==0x55)
             char temp[100] = {0}; 
             if(strcmp(sencondItem->valuestring, "sensorVersion") == 0) 
             {
-                
-                // if(strlen(device_version) < 2)
-                // {
-                //     sprintf(temp,"{\"id\":\"%s\",\"ts\":%d,\"type\":4,\"version\":\"version not get yet,pleas wait\"}",
-                //                                         device_info->id,
-                //                                         device_info->utc.time_stamp);
-                // }
-                // else
-                // {
-                //     sprintf(temp,"{\"id\":\"%s\",\"ts\":%d,\"type\":4,\"version\":\"%s\"}",
-                //                                         device_info->id,
-                //                                         device_info->utc.time_stamp,
-                //                                         device_version);
-                // }
-
                 sprintf(temp,"{\"id\":\"%s\",\"ts\":%d,\"type\":4,\"version\":\"%s\"}",
                                                         device_info->id,
                                                         device_info->utc.time_stamp,
@@ -424,113 +339,6 @@ void ble_data_parser_task(void *pv)
     }
     vTaskDelete(NULL);
 }
-
-/*
-#define BLE_RECV_BUF_SIZE 512
-
-void ble_data_parser_task(void *pv)
-{
-    static char ble_recv_buf[BLE_RECV_BUF_SIZE];
-    static size_t ble_recv_len = 0;
-
-    uint8_t temp_data[32]; // 临时存放20字节以内的分段
-    int brace_count = 0;
-
-    while (1)
-    {
-        if (xQueueReceive(device_info->ble->xQueue, temp_data, portMAX_DELAY))
-        {
-            size_t seg_len = strlen((char *)temp_data);
-
-            // 防止溢出
-            if (ble_recv_len + seg_len >= BLE_RECV_BUF_SIZE)
-            {
-                ble_recv_len = 0;
-                brace_count = 0;
-                memset(ble_recv_buf, 0, sizeof(ble_recv_buf));
-                continue;
-            }
-
-            // 追加到缓存
-            memcpy(ble_recv_buf + ble_recv_len, temp_data, seg_len);
-            ble_recv_len += seg_len;
-            ble_recv_buf[ble_recv_len] = '\0';
-
-            // 统计大括号匹配数量
-            for (size_t i = 0; i < seg_len; i++)
-            {
-                if (temp_data[i] == '{') brace_count++;
-                else if (temp_data[i] == '}') brace_count--;
-            }
-
-            // 如果 brace_count == 0 并且最后一个是 '}'
-            if (brace_count == 0 && ble_recv_len > 0 && ble_recv_buf[ble_recv_len - 1] == '}')
-            {
-                // 完整JSON
-                ble_data_parser_cb((uint8_t *)ble_recv_buf);
-
-                // 清空缓冲
-                ble_recv_len = 0;
-                memset(ble_recv_buf, 0, sizeof(ble_recv_buf));
-            }
-        }
-    }
-    vTaskDelete(NULL);
-}
-*/
-
-/*
-//mqtt配置解析
-int user_mqtt_data_parser_cb(mmqtt_msg_t *msg)
-{
-    ESP_LOGI(TAG,"user get data success! from_topic=[%d][%s], msg=[%d][%s].", msg->topic_len, msg->topic, msg->data_len, msg->data);
-    if(strstr(msg->topic, user_cli_data_subscribe_topic))
-    {
-        printf("1111111111111\n");
-        cJSON *firstItem = cJSON_Parse((char *)msg->data);
-        printf("%s\n",msg->data);
-        if(firstItem)
-        {
-            printf("22222222222222\n");
-            cJSON *secondItem = cJSON_GetObjectItem(firstItem, "id");
-            if(strstr(secondItem->valuestring, device_info->id))
-            {
-                printf("33333333333333\n");
-                secondItem = cJSON_GetObjectItem(firstItem, "cmd");
-                if(strstr(secondItem->valuestring, "queryReport"))
-                {
-                    printf("444444444444\n");
-                    // char get_report_cmd2[] = "report 0";
-                    // set_bc(device_info->utc.time_stamp, get_report_cmd2, 0, NULL, NULL, NULL);
-                }
-            }
-            cJSON_Delete(firstItem);
-        }
-    }
-    return 0;
-}
-
-//mqtt接收topic
-void mqtt_data_parser_task(void *pv)
-{
-    mmqtt_msg_t *recv_msg = (mmqtt_msg_t *)malloc(sizeof(mmqtt_msg_t));
-        
-    while (1)
-    {   
-        memset(recv_msg, 0, sizeof(mmqtt_msg_t));
-        if (xQueueReceive(device_info->aliyun.xQueue, recv_msg, portMAX_DELAY))
-        {
-            // printf("device_info->aliyun.msg.data = %s\n",(char *)device_info->aliyun.msg.data);
-            printf("topic len: %d  data len: %d\r\n", recv_msg->topic_len, recv_msg->data_len);
-            user_mqtt_data_parser_cb(recv_msg);
-        }
-    }
-
-    free(recv_msg);
-    vTaskDelete(NULL);
-}
-
-*/
 
 void report_to_aliyun(uint8_t type, uint8_t *value, uint16_t len)
 {
@@ -698,9 +506,8 @@ void data_display_task(void *pv)
     {
         ESP_LOGI(TAG, "/*======111=====================data display===============%d===========*/",0);
 
-        ESP_LOGI(TAG, "heap_size:%d,version:%s,id:%s,dataUpOn %d,sleepUping %d,sensorOta %d,current_report:%s",esp_get_free_heap_size(),device_info->ota.running_version,
+        ESP_LOGI(TAG, "heap_size:%d,version:%s,id:%s,dataUpOn %d,sensorOta %d,current_report:%s",esp_get_free_heap_size(),device_info->ota.running_version,
                                                                                                 device_info->id,device_info->data_up_switch,
-                                                                                                sleep_up_flag,
                                                                                                 0,
                                                                                                 device_info->report);
         ESP_LOGI(TAG, "5s-->num:%d\tstatus:[%d][%d][%d][%d][%d]\theart:%d\tbreath:%d dev-time:%d id:%s",user_5s_sensor_info->sequence, user_5s_sensor_info->status[0],
@@ -722,7 +529,8 @@ void data_display_task(void *pv)
                                                                                                 user_60s_sensor_info->SBP,
                                                                                                 user_60s_sensor_info->DBP);
 
-        ESP_LOGI(TAG, "wifi:%d\tmqtt:%d\tble:%d\ttime:%d\tbc_device_id:%d",device_info->wifi.flag, device_info->aliyun.flag,device_info->ble->flag,device_info->utc.flag,devic_id_flag);
+        ESP_LOGI(TAG, "wifi:%d\tmqtt:%d\tble:%d\ttime:%d\tsetupLR:%d/%d",device_info->wifi.flag, device_info->aliyun.flag,device_info->ble->flag,device_info->utc.flag,
+                 (int)g_su3_sensor[0].setup_done, (int)g_su3_sensor[1].setup_done);
         if(device_info->utc.flag)
         {
             ESP_LOGI(TAG, "%d-%02d-%02d %02d:%02d:%02d  %02d %d", human_year ,human_mon, ti.tm_mday, ti.tm_hour, ti.tm_min, ti.tm_sec , ti.tm_wday, device_info->utc.time_stamp);
@@ -733,32 +541,273 @@ void data_display_task(void *pv)
     vTaskDelete(NULL);
 }
 
-/* 需左右双侧执行的命令（对时/模式等） */
-static bool su3_cmd_need_both_sides(const char *value)
+/* 基座 id → 侧别 id（第 8～9 字符改为 03/06） */
+static void su3_make_side_id(char *out, size_t out_len, int side)
 {
-    if (value == NULL) {
-        return false;
+    size_t n;
+
+    if (out == NULL || out_len == 0 || device_info == NULL) {
+        return;
     }
-    if (strncmp(value, "set rtc", 7) == 0) {
-        return true;
+    strncpy(out, device_info->id, out_len - 1U);
+    out[out_len - 1U] = '\0';
+    n = strlen(out);
+    if (n >= 9U) {
+        out[7] = '0';
+        out[8] = (side == SU3_SIDE_LEFT) ? '3' : '6';
     }
-    if (strncmp(value, "set mode", 8) == 0) {
-        return true;
-    }
-    if (strcmp(value, "version") == 0 || strcmp(value, "reboot") == 0) {
-        return true;
-    }
-    return false;
 }
 
-int set_bc(uint32_t time_stamp, char *value, uint8_t switch_return, uint8_t switch_to_aliyun, char *return_value, uint16_t time_ms)
+bool su3_mqtt_id_belong(const char *mqtt_id)
+{
+    const char *base;
+    size_t n, i;
+
+    if (mqtt_id == NULL || device_info == NULL || device_info->id[0] == '\0') {
+        return false;
+    }
+    base = device_info->id;
+    n = strlen(base);
+    if (n < 9U || strlen(mqtt_id) != n) {
+        return false;
+    }
+    for (i = 0; i < n; i++) {
+        if (i == 7U || i == 8U) {
+            continue;
+        }
+        if (mqtt_id[i] != base[i]) {
+            return false;
+        }
+    }
+    return (mqtt_id[7] == '0' &&
+            (mqtt_id[8] == '0' || mqtt_id[8] == '3' || mqtt_id[8] == '6'));
+}
+
+static void su3_json_escape(const char *in, char *out, size_t out_len)
+{
+    size_t j = 0;
+
+    if (out == NULL || out_len == 0) {
+        return;
+    }
+    out[0] = '\0';
+    if (in == NULL) {
+        return;
+    }
+    for (size_t i = 0; in[i] != '\0' && (j + 2U) < out_len; i++) {
+        char c = in[i];
+        if (c == '\\' || c == '"') {
+            out[j++] = '\\';
+            out[j++] = c;
+        } else if (c == '\n') {
+            out[j++] = '\\';
+            out[j++] = 'n';
+        } else if (c == '\r') {
+            continue;
+        } else {
+            out[j++] = c;
+        }
+    }
+    out[j] = '\0';
+}
+
+/* CLI 命令组 JSON 字符串，并发送给云端 */
+static void su3_cli_put(const char *id, const char *cmd, const char *back)
+{
+    char back_esc[1024];
+    char json[1400];
+    int n;
+
+    su3_json_escape(back, back_esc, sizeof(back_esc));
+    n = snprintf(json, sizeof(json),
+                 "{\"id\":\"%s\",\"ts\":%d,\"type\":\"sensorCli\",\"cmd\":\"%s\",\"back\":\"%s\"}",
+                 id, device_info->utc.time_stamp, cmd ? cmd : "", back_esc);
+    if (n <= 0 || (size_t)n >= sizeof(json)) {
+        return;
+    }
+    printf("cli/put %s\n", json);
+    if (client != NULL) {
+        esp_mqtt_client_publish(client, user_cli_data_publish_topic, json, strlen(json), 0, 0);
+    }
+}
+
+static void su3_cli_one_side(su3_side_t side, const char *cmd, char *rsp, size_t rsp_len, uint32_t timeout_ms)
+{
+    su3_addr_t dest = su3_side_to_addr(side);
+
+    rsp[0] = '\0';
+    if (strncmp(cmd, "report", 6) == 0 && (cmd[6] == '\0' || cmd[6] == ' ')) {
+        char fire[24];
+        snprintf(fire, sizeof(fire), "report %d", atoi(cmd + 6));
+        (void)su3_cli_fire(dest, fire);
+        strncpy(rsp, "ok", rsp_len - 1U);
+        rsp[rsp_len - 1U] = '\0';
+        return;
+    }
+    (void)su3_cli_exec(dest, cmd, rsp, rsp_len, timeout_ms);
+}
+
+#define SU3_CLI_Q_LEN        4
+#define SU3_CLI_JOB_ID_LEN   24
+#define SU3_JOB_CLI          0
+#define SU3_JOB_SYNC         1
+/*
+ * report 用 fire：传感器随后异步推 topic5~12。
+ * 部分报告不完整、无可靠「发完」信号，固定等待 SU3_REPORT_SETTLE_MS 再拉下一条。
+ * 与 5s/60s 实时 MQTT 并行发布，不做互斥（cli_worker 已串行执行 report）。
+ */
+#define SU3_REPORT_SETTLE_MS  15000U
+#define SU3_REPORT_POLL_MS    (5U * 60U * 1000U)
+#define SU3_REPORT_NAME_MAX   32
+#define SU3_REPORT_LIST_MAX   30
+
+typedef struct {
+    uint8_t kind;
+    char mqtt_id[SU3_CLI_JOB_ID_LEN];
+    char cmd[SU3_CLI_CMD_MAX];
+} su3_cli_job_t;
+
+static QueueHandle_t s_cli_q;
+static void su3_report_sync_once(void);
+
+static void su3_report_settle(void)
+{
+    vTaskDelay(pdMS_TO_TICKS(SU3_REPORT_SETTLE_MS));
+}
+
+/** 真正执行 CLI；仅由 cli_worker 调用 */
+static void su3_mqtt_run_sensor_cli(const char *mqtt_id, const char *cmd)
+{
+    char rsp[SU3_CLI_RSP_DEFAULT];
+    char side_id[24];
+    bool do_left;
+    bool do_right;
+    bool any_ok = false;
+    bool is_report;
+    uint32_t timeout_ms = 1000;
+
+    if (mqtt_id == NULL || cmd == NULL || !su3_is_ready()) {
+        ESP_LOGW(TAG, "cli drop id=%s cmd=\"%s\" ready=%d",
+                 mqtt_id ? mqtt_id : "null", cmd ? cmd : "null", (int)su3_is_ready());
+        return;
+    }
+
+    is_report = (strncmp(cmd, "report", 6) == 0);
+    if (strcmp(cmd, "list") == 0) {
+        timeout_ms = 3000;
+    }
+    if (is_report && cmd[6] == ' ') {
+        strncpy(json_report_name, cmd + 7, sizeof(json_report_name) - 1U);
+        json_report_name[sizeof(json_report_name) - 1U] = '\0';
+    }
+
+    do_left = (mqtt_id[8] == '0' || mqtt_id[8] == '3');
+    do_right = (mqtt_id[8] == '0' || mqtt_id[8] == '6');
+    ESP_LOGI(TAG, "cli exec id=%s cmd=\"%s\" L=%d R=%d",
+             mqtt_id, cmd, (int)do_left, (int)do_right);
+
+    if (do_left) {
+        su3_make_side_id(side_id, sizeof(side_id), SU3_SIDE_LEFT);
+        su3_cli_one_side(SU3_SIDE_LEFT, cmd, rsp, sizeof(rsp), timeout_ms);
+        if (strncmp(rsp, "ok", 2) == 0) {
+            any_ok = true;
+        }
+        su3_cli_put(side_id, cmd, rsp);
+    }
+    if (do_right) {
+        su3_make_side_id(side_id, sizeof(side_id), SU3_SIDE_RIGHT);
+        su3_cli_one_side(SU3_SIDE_RIGHT, cmd, rsp, sizeof(rsp), timeout_ms);
+        if (strncmp(rsp, "ok", 2) == 0) {
+            any_ok = true;
+        }
+        su3_cli_put(side_id, cmd, rsp);
+    }
+
+    if (is_report) {
+        su3_report_settle();
+    }
+    if (strcmp(cmd, "reboot") == 0 && any_ok) {
+        sensor_reboot_config();
+    }
+    if (strcmp(cmd, "set mode 0") == 0 && any_ok) {
+        vTaskDelay(pdMS_TO_TICKS(2000));
+        su3_report_sync_request();
+    }
+}
+
+static void su3_cli_worker(void *pv)
+{
+    su3_cli_job_t job;
+    (void)pv;
+
+    while (1) {
+        if (xQueueReceive(s_cli_q, &job, portMAX_DELAY) != pdTRUE) {
+            continue;
+        }
+        if (job.kind == SU3_JOB_SYNC) {
+            su3_report_sync_once();
+        } else {
+            su3_mqtt_run_sensor_cli(job.mqtt_id, job.cmd);
+        }
+    }
+}
+
+static void su3_cli_worker_start(void)
+{
+    if (s_cli_q != NULL) {
+        return;
+    }
+    s_cli_q = xQueueCreate(SU3_CLI_Q_LEN, sizeof(su3_cli_job_t));
+    if (s_cli_q == NULL) {
+        ESP_LOGE(TAG, "cli queue create fail");
+        return;
+    }
+    xTaskCreatePinnedToCore(su3_cli_worker, "su3_cli", 8192, NULL, 4, NULL, 1);
+}
+
+bool su3_stack_ready(void)
+{
+    return su3_is_ready();
+}
+
+void su3_report_sync_request(void)
+{
+    su3_cli_job_t job;
+
+    if (s_cli_q == NULL) {
+        return;
+    }
+    memset(&job, 0, sizeof(job));
+    job.kind = SU3_JOB_SYNC;
+    if (xQueueSend(s_cli_q, &job, 0) != pdTRUE) {
+        ESP_LOGW(TAG, "report sync queue full");
+    }
+}
+
+/** MQTT 回调入口：只入队 */
+void su3_mqtt_handle_sensor_cli(const char *mqtt_id, const char *cmd)
+{
+    su3_cli_job_t job;
+
+    if (mqtt_id == NULL || cmd == NULL || s_cli_q == NULL) {
+        return;
+    }
+    memset(&job, 0, sizeof(job));
+    job.kind = SU3_JOB_CLI;
+    strncpy(job.mqtt_id, mqtt_id, sizeof(job.mqtt_id) - 1U);
+    strncpy(job.cmd, cmd, sizeof(job.cmd) - 1U);
+    if (xQueueSend(s_cli_q, &job, 0) != pdTRUE) {
+        ESP_LOGW(TAG, "cli queue full, drop \"%s\"", cmd);
+        su3_cli_put(mqtt_id, cmd, "busy");
+    }
+}
+
+int set_bc(uint32_t time_stamp, char *value, uint8_t switch_return,
+           uint8_t switch_to_aliyun, char *return_value, uint16_t time_ms)
 {
     char tmp[256];
+    char rsp2[256];
     char *rsp = (return_value != NULL) ? return_value : tmp;
-    size_t rsp_cap = sizeof(tmp);
-    esp_err_t err;
-    su3_addr_t left = su3_side_to_addr(SU3_SIDE_LEFT);
-    su3_addr_t right = su3_side_to_addr(SU3_SIDE_RIGHT);
 
     (void)time_stamp;
     (void)switch_to_aliyun;
@@ -767,270 +816,239 @@ int set_bc(uint32_t time_stamp, char *value, uint8_t switch_return, uint8_t swit
         return -1;
     }
 
+    /* 本地业务默认双侧（等同基座 id=00）；MQTT 侧别路由走 cli_worker */
     if (switch_return == 0) {
-        err = su3_cli_fire(left, value);
-        if (su3_cmd_need_both_sides(value)) {
-            (void)su3_cli_fire(right, value);
-        }
-        return (err == ESP_OK) ? 0 : -1;
+        (void)su3_cli_fire(su3_side_to_addr(SU3_SIDE_LEFT), value);
+        (void)su3_cli_fire(su3_side_to_addr(SU3_SIDE_RIGHT), value);
+        return 0;
     }
 
-    err = su3_cli_exec(left, value, rsp, rsp_cap, time_ms);
-    if (su3_cmd_need_both_sides(value)) {
-        char rsp2[256];
-        (void)su3_cli_exec(right, value, rsp2, sizeof(rsp2), time_ms);
-    }
-    return (err == ESP_OK) ? 0 : -1;
+    su3_cli_one_side(SU3_SIDE_LEFT, value, rsp, sizeof(tmp), time_ms);
+    su3_cli_one_side(SU3_SIDE_RIGHT, value, rsp2, sizeof(rsp2), time_ms);
+    return (rsp[0] != '\0') ? 0 : -1;
 }
 
 int sensor_ota_bc(char *value)
 {
     (void)value;
-    /* 预留：转发 su3_sensor_ota，当前未实现 */
-    esp_err_t err = su3_sensor_ota(su3_side_to_addr(SU3_SIDE_LEFT), NULL, 0);
-    return (err == ESP_OK) ? 0 : -1;
+    return (su3_sensor_ota(su3_side_to_addr(SU3_SIDE_LEFT), NULL, 0) == ESP_OK) ? 0 : -1;
 }
 
 uint32_t find_report_time(char *report_name, uint8_t len)
 {
     uint32_t report_tim;
-    // printf("%s\n", report_name);
-    struct tm stm;  
-    int iY, iM, iD, iH, iMin, iS;  
-    if (len < 23) {
-        printf("Invalid report format: Length is too short.\n");
-        return 0;           // 返回默认值，表示格式错误
-    }
-    memset(&stm, 0, sizeof(stm));  
-    iY =    atoi(report_name + len - 23);
-    // printf("iY = %d\n",iY);  
-    iM =    atoi(report_name + len - 18); 
-    // printf("iM = %d\n",iM);  
-    iD =    atoi(report_name + len - 15);
-    // printf("iD = %d\n",iD);   
-    iH =    atoi(report_name + len - 12);
-    // printf("iH = %d\n",iH);   
-    iMin =  atoi(report_name + len - 9); 
-    // printf("iMin = %d\n",iMin);  
-    iS =    atoi(report_name + len - 6);  
-    // printf("iS = %d\n",iS);  
-        // 简单校验：确保日期和时间的字段有效
-    if (iY < 1900 || iM < 1 || iM > 12 || iD < 1 || iD > 31 || 
-        iH < 0 || iH > 23 || iMin < 0 || iMin > 59 || iS < 0 || iS > 59) {
-        printf("Invalid time values in report: %d-%d-%d %d:%d:%d\n", iY, iM, iD, iH, iMin, iS);
-        return 0; // 返回默认值，表示解析失败
+    struct tm stm;
+    int iY, iM, iD, iH, iMin, iS;
+
+    if (report_name == NULL || len < 23) {
+        return 0;
     }
     memset(&stm, 0, sizeof(stm));
-    stm.tm_year=iY-1900;  
-    stm.tm_mon=iM-1;  
-    stm.tm_mday=iD;  
-    stm.tm_hour=iH;  
-    stm.tm_min=iMin;  
-    stm.tm_sec=iS;  
-
-    /*printf("%d-%0d-%0d %0d:%0d:%0d\n", iY, iM, iD, iH, iMin, iS);*/   //标准时间格式例如：2016:08:02 12:12:30
-    report_tim = (uint32_t)mktime(&stm);
-    if (report_tim <= 1262304000UL || report_tim >= 2147483647UL){
-        return 0; 
+    iY = atoi(report_name + len - 23);
+    iM = atoi(report_name + len - 18);
+    iD = atoi(report_name + len - 15);
+    iH = atoi(report_name + len - 12);
+    iMin = atoi(report_name + len - 9);
+    iS = atoi(report_name + len - 6);
+    if (iY < 1900 || iM < 1 || iM > 12 || iD < 1 || iD > 31 ||
+        iH < 0 || iH > 23 || iMin < 0 || iMin > 59 || iS < 0 || iS > 59) {
+        return 0;
     }
-    
+    stm.tm_year = iY - 1900;
+    stm.tm_mon = iM - 1;
+    stm.tm_mday = iD;
+    stm.tm_hour = iH;
+    stm.tm_min = iMin;
+    stm.tm_sec = iS;
+    report_tim = (uint32_t)mktime(&stm);
+    if (report_tim <= 1262304000UL || report_tim >= 2147483647UL) {
+        return 0;
+    }
     return report_tim;
 }
 
-void check_report_and_up_to_aliyun(void)
+/*
+ * 睡眠报告同步：补传/发现新报告。
+ * 左右各 list → 与 NVS(report_L/R) 比时间 → 落后则 fire report N → settle → 写 NVS。
+ * 收包仍走 su3_on_topic topic5~12。
+ */
+static char s_last_report[SU3_SENSOR_SIDE_MAX][SU3_REPORT_NAME_MAX];
+
+static const char *su3_report_nvs_key(int side)
 {
-    //uint64_t start_time = esp_timer_get_time(); 
-    char return_value[1024] = {0};
-    char json_buff[512] = {0};
-    uint16_t offset = 0;
-    char temp[3] = {0};
-    char get_report_cmd1[] = "list";
-    char get_report_cmd2[] = "report 0";
-    uint8_t report_num = 0;
-    char report_name[30][30] = {0};  //报告列表
-    uint32_t report_time[30] = {0};   //报告对应的时间
-    uint8_t report_len[30] = {0};   //报告名长度
-    uint32_t current_time;
-    nvs_handle nvs_config_handler;
-
-    memset(return_value, 0, 1024);
-    printf("get_report_cmd1\n");
-    set_bc(device_info->utc.time_stamp, get_report_cmd1, 1, 1, return_value, 1000);
-    // printf("\n \n \n cil = list :return_value =\n%s\nstrlen(return_value) = %d\n", return_value, strlen(return_value));
-
-    if(strstr(return_value,"NONE"))
-    {
-        printf("no report, need't to up to aliyun\n");
-    }
-    else
-    { 
-        uint16_t len = strlen(return_value);
-        for(uint16_t i=0; i<len; i++)
-        {
-            report_len[report_num] ++ ;
-            // printf("report_len[%d] = %d, return_value[%d] = %c\n", report_num, report_len[report_num], i, return_value[i]);
-            if(return_value[i] == '\n')
-            {
-                report_num++;
-            } 
-            if (report_len[report_num] >= 28)
-            {
-                printf("report_len[%d] = %d, return_value[%d] = %c\n", report_num, report_len[report_num], i, return_value[i]);
-                report_len[report_num] = 28;
-                return_value[i] = '\n';
-                report_num++;
-                printf("Warning: %d 报告名超过了28个字节 设置为28\n", report_num);
-            }
-            if(report_num > 30)
-            {
-                report_num = 30;
-                printf("Warning: %d 报告数超过了30个 设置为0\n", report_num);
-            }
-        }
-
-        printf("report has %d total\n", report_num);
-
-        //分割报告名
-        for(uint16_t i=0; i<report_num; i++)
-        {
-            memcpy(report_name[i], return_value + offset, report_len[i] - 2);
-            offset += report_len[i] ;
-            //printf("report_name[%d] = %s\n", i, report_name[i]);
-            report_time[i] = find_report_time(report_name[i], strlen(report_name[i]));
-            //printf("report_time[%d] = %d\n",i, report_time[i]);
-        }
-        
-        printf("current report = %s\n",device_info->report);
-        //初始报告全部上报
-        if(strstr(device_info->report, "NONE"))
-        {
-            current_time = 0;
-            printf("Report is being updated ...\n");
-            
-            //发送具体数据
-            for(uint16_t i=0; i<report_num; i++)
-            {
-                printf("%s\n",report_name[i]);
-                memset(json_buff, 0, 512);
-                //发送报告名
-                sprintf(json_buff, "{\"id\":\"%s\",\"ts\":%d,\"type\":4,\"report\":\"%s\",\"data\":\"%s\"}",
-                                                                                        device_info->id,
-                                                                                        device_info->utc.time_stamp,
-                                                                                        report_name[i],
-                                                                                        report_name[i]);
-                printf("%s\n",json_buff);                                                                       
-                //
-                if(get_mqtt_status() && device_info->data_up_switch)
-                {
-                    if(mqtt_send_mutex == true)
-                    {
-                        mqtt_send_mutex = false;
-                        esp_mqtt_client_publish(client, user_sleep_data_publish_topic, (char *)json_buff, strlen((char *)json_buff), 0, 0);
-                        //vTaskDelay(1000 / portTICK_PERIOD_MS);
-                        mqtt_send_mutex = true;
-                    }
-                }
-                memcpy(temp, report_name[i], 2); 
-                //printf("%d\n",atoi(temp));
-                sprintf(get_report_cmd2, "report %d",atoi(temp));
-                printf("初始化全部上报111111.%s\n",get_report_cmd2);
-                if(current_time < report_time[i])
-                {
-                    //存储最新的报告名
-                    ESP_ERROR_CHECK(nvs_open("config_cfg", NVS_READWRITE, &nvs_config_handler));
-                    ESP_ERROR_CHECK(nvs_set_str(nvs_config_handler, "report", report_name[i]));
-                    ESP_ERROR_CHECK(nvs_commit(nvs_config_handler));
-                    nvs_close(nvs_config_handler);
-                    memset(device_info->report,0,128);
-                    memcpy(device_info->report, report_name[i], strlen(report_name[i]));
-                    printf("recent report= %s\n", device_info->report);
-                    current_time = find_report_time(device_info->report, strlen(device_info->report));
-                    //current_time = report_time[i];
-                }
-
-                if(device_info->data_up_switch)
-                {
-                    if(sleep_up_flag == 1)
-                    {
-                        vTaskDelay(5 * 1000 / portTICK_PERIOD_MS);   //??隐患：在延时期间，报告上传指令1分钟结束，sleep_up_flag回到0，此时又接到云端上传指令
-                    }
-                    sleep_up_flag = 1;
-                    memset(json_report_name, 0, 32);
-                    strcpy(json_report_name, report_name[i]);
-                    set_bc(device_info->utc.time_stamp, get_report_cmd2, 0, 0, return_value, 100);   //发送读取report指令
-                    vTaskDelay(15*1000 / portTICK_PERIOD_MS);
-                    sleep_up_flag = 0;
-                }
-
-                //printf("current_time = %d\n",current_time);
-                //printf("report_time[%d] = %d\n",i,report_time[i]);
-            }  
-        }
-        //检测有无新报告，并上报
-        else
-        {
-            //printf("为什么没有进入新报告上传！ report_num = %d\n",report_num);
-            for(uint16_t i=0; i<report_num; i++)
-            {  
-                current_time = find_report_time(device_info->report, strlen(device_info->report));
-                printf("current_time = %d\n",current_time);
-                //printf("report_time[%d] = %d\n",i,report_time[i]);
-                if(current_time < report_time[i])
-                {
-                    sprintf(json_buff, "{\"id\":\"%s\",\"ts\":%d,\"type\":4,\"report\":\"%s\",\"data\":\"%s\"}",
-                                                                                        device_info->id,
-                                                                                        device_info->utc.time_stamp,
-                                                                                        report_name[i],
-                                                                                        report_name[i]);
-                    printf("%s\n",json_buff);
-                    //                                                                    
-                    if(get_mqtt_status()&& device_info->data_up_switch)
-                    {
-                        //if(mqtt_send_mutex == true)
-                        {
-                            mqtt_send_mutex = false;
-                            esp_mqtt_client_publish(client, user_sleep_data_publish_topic, (char *)json_buff, strlen((char *)json_buff), 0, 0);
-                            vTaskDelay(1000 / portTICK_PERIOD_MS);
-                            mqtt_send_mutex = true;
-                        }
-                    }
-
-                    memcpy(temp, report_name[i], 2);
-                    printf("uploading : %s\n",report_name[i]);
-                    //printf("%d\n",atoi(temp));
-                    sprintf(get_report_cmd2, "report %d",atoi(temp));
-                    printf("存储最新报告名2222222.%s\n",get_report_cmd2);
-
-                    // //存储最新的报告名
-                    ESP_ERROR_CHECK(nvs_open("config_cfg", NVS_READWRITE, &nvs_config_handler));
-                    ESP_ERROR_CHECK(nvs_set_str(nvs_config_handler, "report", report_name[i]));
-                    ESP_ERROR_CHECK(nvs_commit(nvs_config_handler));
-                    nvs_close(nvs_config_handler);
-                    memset(device_info->report,0,128);
-                    memcpy(device_info->report, report_name[i], strlen(report_name[i]));
-
-                    if(device_info->data_up_switch)
-                    {
-                        if(sleep_up_flag == 1)
-                        {
-                            vTaskDelay(5* 1000 / portTICK_PERIOD_MS);
-                        }
-                        sleep_up_flag = 1;
-                        memset(json_report_name, 0, 32);
-                        strcpy(json_report_name, report_name[i]);
-                        set_bc(device_info->utc.time_stamp, get_report_cmd2, 0, 0, return_value, 200);
-                        vTaskDelay(5 * 1000 / portTICK_PERIOD_MS);
-                        set_bc(device_info->utc.time_stamp, get_report_cmd2, 0, 0, return_value, 1000);   //发送读取report指令
-                        sleep_up_flag = 0;
-                    }
-
-                } 
-            }
-        }
-    }
-    //int64_t end_time = esp_timer_get_time();
-    //printf("check_report_and_up_to_aliyun time = %lld ms\n", (end_time - start_time)/1000);
+    return (side == SU3_SIDE_LEFT) ? "report_L" : "report_R";
 }
+
+static void su3_report_nvs_load(void)
+{
+    nvs_handle h;
+    char buf[SU3_REPORT_NAME_MAX];
+    size_t len;
+    int i;
+
+    for (i = 0; i < SU3_SENSOR_SIDE_MAX; i++) {
+        strncpy(s_last_report[i], "NONE", sizeof(s_last_report[i]) - 1U);
+    }
+    if (nvs_open("config_cfg", NVS_READONLY, &h) != ESP_OK) {
+        return;
+    }
+    for (i = 0; i < SU3_SENSOR_SIDE_MAX; i++) {
+        len = sizeof(buf);
+        memset(buf, 0, sizeof(buf));
+        if (nvs_get_str(h, su3_report_nvs_key(i), buf, &len) == ESP_OK && buf[0] != '\0') {
+            strncpy(s_last_report[i], buf, sizeof(s_last_report[i]) - 1U);
+        }
+    }
+    nvs_close(h);
+    strncpy(device_info->report, s_last_report[SU3_SIDE_LEFT], sizeof(device_info->report) - 1U);
+}
+
+static void su3_report_nvs_save(int side, const char *name)
+{
+    nvs_handle h;
+
+    if (side < 0 || side >= SU3_SENSOR_SIDE_MAX || name == NULL) {
+        return;
+    }
+    strncpy(s_last_report[side], name, sizeof(s_last_report[side]) - 1U);
+    s_last_report[side][sizeof(s_last_report[side]) - 1U] = '\0';
+    if (side == SU3_SIDE_LEFT) {
+        strncpy(device_info->report, name, sizeof(device_info->report) - 1U);
+        device_info->report[sizeof(device_info->report) - 1U] = '\0';
+    }
+    if (nvs_open("config_cfg", NVS_READWRITE, &h) != ESP_OK) {
+        return;
+    }
+    (void)nvs_set_str(h, su3_report_nvs_key(side), s_last_report[side]);
+    (void)nvs_commit(h);
+    nvs_close(h);
+}
+
+/** 解析 list 文本为报告名行，返回条数 */
+static int su3_parse_list(const char *text, char names[][SU3_REPORT_NAME_MAX], int max_n)
+{
+    const char *p;
+    int n = 0;
+
+    if (text == NULL || names == NULL || max_n <= 0) {
+        return 0;
+    }
+    if (strstr(text, "NONE") != NULL) {
+        return 0;
+    }
+    p = text;
+    while (*p != '\0' && n < max_n) {
+        const char *eol;
+        size_t len;
+
+        while (*p == '\r' || *p == '\n' || *p == ' ') {
+            p++;
+        }
+        if (*p == '\0') {
+            break;
+        }
+        eol = strchr(p, '\n');
+        len = eol ? (size_t)(eol - p) : strlen(p);
+        while (len > 0 && (p[len - 1U] == '\r' || p[len - 1U] == ' ')) {
+            len--;
+        }
+        if (len >= SU3_REPORT_NAME_MAX) {
+            len = SU3_REPORT_NAME_MAX - 1U;
+        }
+        if (len > 0) {
+            memcpy(names[n], p, len);
+            names[n][len] = '\0';
+            n++;
+        }
+        p = eol ? (eol + 1) : (p + strlen(p));
+    }
+    return n;
+}
+
+static void su3_report_sync_side(int side)
+{
+    char list_rsp[SU3_CLI_RSP_DEFAULT];
+    char names[SU3_REPORT_LIST_MAX][SU3_REPORT_NAME_MAX];
+    char cmd[24];
+    char side_id[24];
+    char json[256];
+    char dummy[8];
+    int count;
+    int i;
+    uint32_t last_ts = 0;
+
+    if (side < 0 || side >= SU3_SENSOR_SIDE_MAX) {
+        return;
+    }
+    if (!su3_is_ready() || !g_su3_sensor[side].setup_done) {
+        return;
+    }
+
+    memset(list_rsp, 0, sizeof(list_rsp));
+    su3_cli_one_side((su3_side_t)side, "list", list_rsp, sizeof(list_rsp), 3000);
+    count = su3_parse_list(list_rsp, names, SU3_REPORT_LIST_MAX);
+    if (count <= 0) {
+        return;
+    }
+
+    if (strcmp(s_last_report[side], "NONE") != 0) {
+        last_ts = find_report_time(s_last_report[side], (uint8_t)strlen(s_last_report[side]));
+    }
+
+    su3_make_side_id(side_id, sizeof(side_id), side);
+    for (i = 0; i < count; i++) {
+        uint32_t ts = find_report_time(names[i], (uint8_t)strlen(names[i]));
+        int idx;
+
+        if (ts == 0) {
+            continue;
+        }
+        if (last_ts != 0 && ts <= last_ts) {
+            continue;
+        }
+
+        idx = atoi(names[i]);
+        snprintf(cmd, sizeof(cmd), "report %d", idx);
+        snprintf(json, sizeof(json),
+                 "{\"id\":\"%s\",\"ts\":%d,\"type\":4,\"report\":\"%s\"}",
+                 side_id, device_info->utc.time_stamp, names[i]);
+        if (get_mqtt_status() && device_info->data_up_switch) {
+            // ESP_LOGI(TAG, "mqtt put %s\n%s\n", user_sleep_data_publish_topic, json);
+            esp_mqtt_client_publish(client, user_sleep_data_publish_topic, json, strlen(json), 0, 0);
+        }
+
+        ESP_LOGI(TAG, "report pull side=%d %s", side, names[i]);
+        memset(json_report_name, 0, sizeof(json_report_name));
+        strncpy(json_report_name, names[i], sizeof(json_report_name) - 1U);
+        su3_cli_one_side((su3_side_t)side, cmd, dummy, sizeof(dummy), 1000);
+        su3_report_settle();
+
+        su3_report_nvs_save(side, names[i]);
+        last_ts = ts;
+    }
+}
+
+static void su3_report_sync_once(void)
+{
+    if (!su3_is_ready() || !get_mqtt_status() || ota_now_flag) {
+        return;
+    }
+    su3_report_sync_side(SU3_SIDE_LEFT);
+    su3_report_sync_side(SU3_SIDE_RIGHT);
+}
+
+static void su3_report_sync_task(void *pv)
+{
+    (void)pv;
+    vTaskDelay(pdMS_TO_TICKS(20000));
+    while (1) {
+        if (get_mqtt_status() && get_5s_flag && device_info->utc.flag) {
+            su3_report_sync_request();
+        }
+        vTaskDelay(pdMS_TO_TICKS(SU3_REPORT_POLL_MS));
+    }
+}
+
 //utc 获取任务
 void utc_get_task(void *pv)
 {
@@ -1055,26 +1073,26 @@ void utc_get_task(void *pv)
             printf("[UTC] SNTP 同步成功\n");
         }
 
-        /* 等待博创 device_id（串口通信正常） */
-        while (devic_id_flag == 0) {
+        /* 等待至少一侧 SU3 setup（set mode + set rtc）完成 */
+        while (!g_su3_sensor[SU3_SIDE_LEFT].setup_done &&
+               !g_su3_sensor[SU3_SIDE_RIGHT].setup_done) {
             vTaskDelay(200 / portTICK_PERIOD_MS);
         }
-        printf("[UTC] devic_id_flag 同步成功\n");
+        printf("[UTC] su3 setup 完成\n");
 
-        time(&now);
-        localtime_r(&now, &ti);
-        device_info->utc.time_stamp = (uint32_t)(mktime(&ti));
-        printf("[UTC] device_info->utc.time_stamp = %d\n", device_info->utc.time_stamp);
-
-        itoa(device_info->utc.time_stamp, time_stamp_to_string, 10);
-        sprintf(set_rtc_cmd, "set rtc %s", time_stamp_to_string);
-        printf("[UTC] set_rtc_cmd = %s\n", set_rtc_cmd);
-
-        set_bc(device_info->utc.time_stamp, set_rtc_cmd, 1, 0, return_value, 100);
-        set_rtc_flag = 1;
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
-        set_bc(device_info->utc.time_stamp, get_version_cmd, 1, 0, device_version, 100);
-        printf("[UTC]  get_version_cmd= %s\n",device_version);
+        if (set_rtc_flag == 0) {
+            time(&now);
+            localtime_r(&now, &ti);
+            device_info->utc.time_stamp = (uint32_t)(mktime(&ti));
+            itoa(device_info->utc.time_stamp, time_stamp_to_string, 10);
+            sprintf(set_rtc_cmd, "set rtc %s", time_stamp_to_string);
+            printf("[UTC] set_rtc_cmd = %s\n", set_rtc_cmd);
+            set_bc(device_info->utc.time_stamp, set_rtc_cmd, 1, 0, return_value, 100);
+            set_rtc_flag = 1;
+            vTaskDelay(1000 / portTICK_PERIOD_MS);
+            set_bc(device_info->utc.time_stamp, get_version_cmd, 1, 0, device_version, 100);
+            printf("[UTC] get_version_cmd= %s\n", device_version);
+        }
     }
     while(1)
     {
@@ -1100,16 +1118,11 @@ void utc_get_task(void *pv)
 		device_info->utc.time[3] = ti.tm_hour ;			//时
 		device_info->utc.time[4] = ti.tm_min;			//分
 		device_info->utc.time[5] = ti.tm_sec ;			//秒
-/*
-        // 异常检查
-        if (user_5s_sensor_info->timestamp <= 1262304000UL ||  user_5s_sensor_info->timestamp >= 2147483647UL){
-            set_rtc_flag = 0;
-            printf("[UTC]  重新校正 user_5s_sensor_info->timestamp = %d\n",user_5s_sensor_info->timestamp);
-        }
-*/
+
         if(set_rtc_flag == 0)
         {
-            while(devic_id_flag == 0)      //等待device_id更新赋值
+            while (!g_su3_sensor[SU3_SIDE_LEFT].setup_done &&
+                   !g_su3_sensor[SU3_SIDE_RIGHT].setup_done)
             {
                 vTaskDelay(1000 / portTICK_PERIOD_MS);
             }
@@ -1136,80 +1149,6 @@ void utc_get_task(void *pv)
     }
     vTaskDelete(NULL);
 }
-// static uint8_t real_data_up_task_flag = 0;
-
-void real_data_up_task(void *pv)
-{
-    uint8_t* temp = (uint8_t*) malloc(512);  //缩减1024
-    if (temp == NULL) {
-        vTaskDelete(NULL);
-        return;
-    }
-    static uint8_t cnt_5s = 0;
-    static int32_t ap_min_max = 0;
-    static int32_t ap_min_min = 0;
-    int32_t ap_min_temp = 0;
-    static uint8_t s_5s_cnt=20;
-    //while(1)
-    {
-        if(s_5s_cnt<20)
-        {
-            s_5s_cnt++;
-        }
-        if(sleep_up_flag == 1)
-        {
-            if(s_5s_cnt>11)
-            {
-                report_cli_up();
-                s_5s_cnt=0;
-            }
-        }
-        else
-        {
-            /* 1s/1min already published in su3_on_topic */
-            (void)temp;
-            (void)cnt_5s;
-            (void)ap_min_max;
-            (void)ap_min_min;
-            (void)ap_min_temp;
-
-        
-        }      
-        //vTaskDelay(5000 / portTICK_PERIOD_MS);
-
-    }
-    free(temp);
-    vTaskDelete(NULL); 
-}
-
-void report_data_up_task(void *pv)
-{
-// #if 0//BLE_TEST
-//     while(1)
-//     {
-//         bochuang_test();
-//         vTaskDelay(3000 / portTICK_PERIOD_MS);
-//     }
-// #else        
-    //while(device_info->utc.flag == false || get_5s_flag == false)
-    {
-        //vTaskDelay(1000 / portTICK_PERIOD_MS);
-    }
-    //vTaskDelay(30*1000 / portTICK_PERIOD_MS);
-    //while(1)
-    {
-        if(get_wifi_status() && get_mqtt_status() && ota_now_flag == 0)
-        {
-
-            check_report_and_up_to_aliyun();
-        }
-
-    }
-// #endif
-    vTaskDelete(NULL); 
-}
-
-
 void twd_task(void *arg)
 {
     // 为TWDT添加任务，并检查dwt状态看是否添加
@@ -1222,92 +1161,6 @@ void twd_task(void *arg)
         vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
     vTaskDelete(NULL); 
-}
-extern char user_cli_data_publish_topic[100];
-void test_task(void *pv)
-{
-    char device_data[100]={0};
-    char temp[2048] = {1};
-    while(0)
-    {
-        char return_value[1024] = {0};
-        set_bc(device_info->utc.time_stamp, "report", 1, 0, return_value, 1000);
-        // printf("%s\n",return_value);
-        sprintf(temp,"{\"id\":\"%s\",\"ts\":%d,\"cmd\":%s,\"back\":\"%s\"}", 
-            device_info->id,
-            device_info->utc.time_stamp,
-            "list",
-            return_value);
-        printf("%s\n",temp);
-        //esp_mqtt_client_publish(client, user_cli_data_publish_topic, (char *)temp, strlen((char *)temp), 0, 0);
-        vTaskDelay(5000 / portTICK_PERIOD_MS);
-    }
-    vTaskDelete(NULL);
-}
-
-void test_task1(void)
-{
-    char device_data[100]={0};
-    char temp[2048] = {0};
-    //while(1)
-    {
-        char return_value[1024] = {0};
-        set_bc(device_info->utc.time_stamp, "list", 1, 0, return_value, 1000);
-        // printf("%s\n",return_value);
-        sprintf(temp,"{\"id\":\"%s\",\"ts\":%d,\"cmd\":%s,\"back\":\"%s\"}", 
-            device_info->id,
-            device_info->utc.time_stamp,
-            "list",
-            return_value);
-        printf("%s\n",temp);
-        //esp_mqtt_client_publish(client, user_cli_data_publish_topic, (char *)temp, strlen((char *)temp), 0, 0);
-    }
-    //vTaskDelete(NULL);
-}
-
-TaskHandle_t utc_get_task_handle = NULL;
-TaskHandle_t real_data_up_task_handle = NULL;
-TaskHandle_t report_data_up_task_handle = NULL;
-void Task_scheduling(void *pv)
-{
-    //static uint8_t s_real_data_up_task_flag = 0;
-    //static uint8_t s_report_data_up_task = 0;
-    static uint8_t s_5s_Cnt = 115;
-    static uint8_t s_1s_Cnt = 5;
-    //xTaskCreatePinnedToCore(utc_get_task, "utc_get", 1024*5, NULL, 3, &utc_get_task_handle, 1);
-    vTaskDelay(10000 / portTICK_PERIOD_MS);     //10s 初始化时间、版本号、传感器 ：old：5s
-    while(1)
-    {
-        while(get_ota_now_flag()==1)
-        {
-            vTaskDelay(1000 / portTICK_PERIOD_MS);
-        }
-    //实时数据上报
-    if(s_1s_Cnt>4)
-    {
-        xTaskCreatePinnedToCore(real_data_up_task, "real_data_up", 1024*6, NULL, 4, &real_data_up_task_handle, 1);   
-        s_1s_Cnt=0;
-        s_5s_Cnt++;
-    }
-    
-    //报告数据上报
-    if(get_mode_flag_config() == 0 || s_5s_Cnt>119)
-    {
-        if(device_info->utc.flag == true && get_5s_flag == true)
-        {
-            set_mode_flag_config(2);
-            s_5s_Cnt=0;
-            xTaskCreatePinnedToCore(report_data_up_task, "report_data_up", 1024*10, NULL, 10, &report_data_up_task_handle, 1);//缩减2048*7
-            
-        }else{
-            s_5s_Cnt = 115; // 延迟30s
-        }
- 
-    }
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
-    s_1s_Cnt++;
-    //printf("s_5s_Cnt:%d\n",s_5s_Cnt);
-    }
 }
 
 void M_Ctr(uint8_t data);
@@ -1638,45 +1491,6 @@ void MFP_Cmd(uint8_t cmd, uint8_t up_type)
     }
 }
 
-/*
-*    <主控盒-设备> MFP接收数据解析函数：帧头、和校验正确则传入主控盒数据解析函数，并在接收到数据后通知发送线程
-
-
-void mfp_datareceive_handler(uint8_t *p,uint16_t len)
-{
-    static uint32_t count = 0;
-    uint8_t checkSum = 0,checkSum1 = 0;
-    memcpy(g_Sync_RX.rawData+count,p,len);
-	count += len;  
-    //printf("count: %d len: %d g_Sync_RX.Syncdata.length =%x \r\n",count,len,g_Sync_RX.Syncdata.length);
-    if(g_Sync_RX.Syncdata.length != 0x3C && g_Sync_RX.Syncdata.length != 0x2C && g_Sync_RX.Syncdata.length != 0x2E && g_Sync_RX.Syncdata.length != 0x36) // 3c 2c
-    {           
-        count = 0;
-    }
-    // for(int i = 0;i<count;i++){printf("count:%d: %x ",i,g_Sync_RX.rawData[i]);} printf("\r\n");
-    // printf("checkSum: %x checkSum1: %x \r\n",rxCalcCheckSum(),g_Sync_RX.Syncdata.data[g_Sync_RX.Syncdata.length]);
-    // printf("count: %d g_Sync_RX.Syncdata.length+3=%d\r\n",count,g_Sync_RX.Syncdata.length+3);
-    if( (count != 0) && (count>=g_Sync_RX.Syncdata.length+3))
-	{	
-		checkSum = rxCalcCheckSum();
-		checkSum1 = g_Sync_RX.Syncdata.data[g_Sync_RX.Syncdata.length];
-        
-		if(checkSum == checkSum1 && g_Sync_RX.rawData[0] != 0)
-		{	
-            printf("crc ok mfp_send-ready \r\n");
-		    count = 0;	
-            mfp_queue_pop_send();                     // 接收完成后 发送队列
-                // MFP_Cmd(g_Sync_RX.syncPacket.type,0);     // 不主动发送
-		}
-		else
-		{	
-            // g_MFPData_t.sync_error.usartCheck_error++;
-			count = 0;
-		}
-	}
-}
-
-*/
 void mfp_datareceive_handler(uint8_t *p, uint16_t len)
 {
     static uint32_t count = 0;
@@ -1854,24 +1668,6 @@ static void MFP_DataReceive_task(void *arg)
                 break;
             //UART_PATTERN_DET
             case UART_PATTERN_DET:
-            /*
-                uart_get_buffered_data_len(ECHO_UART_PORT_NUM, &buffered_size);
-                int pos = uart_pattern_pop_pos(ECHO_UART_PORT_NUM);
-                ESP_LOGI(TAG, "[UART PATTERN DETECTED] pos: %d, buffered size: %d", pos, buffered_size);
-                if (pos == -1) {
-                    // There used to be a UART_PATTERN_DET event, but the pattern position queue is full so that it can not
-                    // record the position. We should set a larger queue size.
-                    // As an example, we directly flush the rx buffer here.
-                    uart_flush_input(ECHO_UART_PORT_NUM);
-                } else {
-                    uart_read_bytes(ECHO_UART_PORT_NUM, dtmp, pos, 100 / portTICK_PERIOD_MS);
-                    uint8_t pat[ECHO_UART_PORT_NUM + 1];
-                    memset(pat, 0, sizeof(pat));
-                    uart_read_bytes(ECHO_UART_PORT_NUM, pat, ECHO_UART_PORT_NUM, 100 / portTICK_PERIOD_MS);
-                    ESP_LOGI(TAG, "read data: %s", dtmp);
-                    ESP_LOGI(TAG, "read pat : %s", pat);
-                }
-            */
                 ESP_LOGI(TAG, "uart pattern detected");
                 break;
             //Others
@@ -1883,22 +1679,6 @@ static void MFP_DataReceive_task(void *arg)
     }
 }
 
-/*
-*  10ms 定时器 
-
-void my_timer_callback(TimerHandle_t xTimer)
-{
-    if(g_MFPData_t.syncModeSendInterval > 0)
-		g_MFPData_t.syncModeSendInterval--;
-    
-}
-
-void start_10ms_timer()
-{
-    my_timer = xTimerCreate("myTimer", pdMS_TO_TICKS(TIMER_PERIOD_MS), pdTRUE, NULL, my_timer_callback);
-    xTimerStart(my_timer, 0);
-}
-*/
 static void handle_snore_trigger_task(void *arg)
 {
     while (1) 
@@ -2137,27 +1917,26 @@ void vlsit_task(void *pv){
 
 #if SU3_USE_NEW_STACK
 #define SU3_SETUP_CMD_TIMEOUT_MS 3000U
-#define SU3_LIST_TEST_ENABLE     1
-#define SU3_LIST_TIMEOUT_MS      3000U
-#define SU3_LIST_POLL_MS         (60U * 1000U)
-#define SU3_REPORT_ZERO_TEST_ENABLE 1
-#define SU3_REPORT_RX_SETTLE_MS  5000U
+#define SU3_5S_SLOTS             5
 
-static char s_su3_devic_id_flag;
+/** 每侧缓存 5 个 1s 点，满则聚合成 /user/5s/put */
+typedef struct {
+    int32_t sensor_ts[SU3_5S_SLOTS];
+    int32_t heart[SU3_5S_SLOTS];
+    int32_t breath[SU3_5S_SLOTS];
+    int32_t status[SU3_5S_SLOTS];
+    int32_t sdata[SU3_5S_SLOTS];
+    int32_t pdata[SU3_5S_SLOTS];
+    int32_t sign[SU3_5S_SLOTS];
+    uint8_t count;
+} su3_5s_agg_t;
+
+static su3_5s_agg_t s_5s_agg[SU3_SENSOR_SIDE_MAX];
 
 static int su3_side_index(su3_addr_t src)
 {
     su3_side_t side = su3_addr_to_side(src);
-    if (side < SU3_SIDE_COUNT) {
-        return (int)side;
-    }
-    /* 设址前：按 pending_src 反查 */
-    for (int i = 0; i < SU3_SENSOR_SIDE_MAX; i++) {
-        if (g_su3_sensor[i].hello_seen && g_su3_sensor[i].pending_src == src) {
-            return i;
-        }
-    }
-    return -1;
+    return (side < SU3_SIDE_COUNT) ? (int)side : -1;
 }
 
 static void su3_on_hello(su3_addr_t src, void *user)
@@ -2165,21 +1944,12 @@ static void su3_on_hello(su3_addr_t src, void *user)
     int idx = su3_side_index(src);
     (void)user;
     if (idx < 0) {
-        /* 上电未设地址时 hello 可能来自非 03/06：按空闲槽分配 */
-        for (int i = 0; i < SU3_SENSOR_SIDE_MAX; i++) {
-            if (!g_su3_sensor[i].hello_seen) {
-                idx = i;
-                break;
-            }
-        }
-    }
-    if (idx < 0) {
-        ESP_LOGW(TAG, "hello from unknown addr=0x%02X (no free side)", src);
+        ESP_LOGW(TAG, "hello ignore addr=0x%02X (expect 0x33/0x36)", src);
         return;
     }
     g_su3_sensor[idx].hello_seen = true;
-    g_su3_sensor[idx].need_setup = true;
-    g_su3_sensor[idx].pending_src = src;
+    g_su3_sensor[idx].need_setup = true;   /* 待 set mode */
+    g_su3_sensor[idx].setup_done = false;   /* 待 set rtc 完成后置位 */
     ESP_LOGI(TAG, "hello side=%d src=0x%02X", idx, src);
 }
 
@@ -2192,15 +1962,13 @@ static void su3_on_cli_push(su3_addr_t src, const char *text, const char *dev_id
     }
     if (dev_id != NULL && dev_id[0] != '\0') {
         strncpy(g_su3_sensor[idx].device_id, dev_id, sizeof(g_su3_sensor[idx].device_id) - 1);
-        /* 兼容旧逻辑：写入全局 device_id 供调试显示 */
         if (device_id[0] == '\0') {
             strncpy(device_id, dev_id, sizeof(device_id) - 1);
             device_id[sizeof(device_id) - 1] = '\0';
         }
     }
     if (text != NULL && strstr(text, "list updata") != NULL) {
-        ESP_LOGI(TAG, "list updata side=%d: %s", idx, text);
-        set_mode_flag_config(0);
+        su3_report_sync_request();
     }
 }
 
@@ -2209,9 +1977,10 @@ static void su3_publish_json(const char *topic, const char *json)
     if (topic == NULL || json == NULL) {
         return;
     }
-    if (get_mqtt_status() && device_info->data_up_switch && sleep_up_flag == 0) {
+    if (get_mqtt_status() && device_info->data_up_switch) {
         if (mqtt_send_mutex) {
             mqtt_send_mutex = false;
+            // ESP_LOGI(TAG, "mqtt put %s\n%s\n", topic, json);
             esp_mqtt_client_publish(client, topic, json, strlen(json), 0, 0);
             mqtt_send_mutex = true;
         }
@@ -2224,102 +1993,154 @@ static void su3_publish_json(const char *topic, const char *json)
     }
 }
 
+/** 收满 5 帧 1s → 上报 /user/5s/put（type=1，数组载荷） */
+static void su3_publish_5s(int side)  /* 5s 数据上报云端*/
+{
+    su3_5s_agg_t *a = &s_5s_agg[side];
+    char id[24];
+    char json[640];
+    int n;
+
+    if (a->count == 0) {
+        return;
+    }
+    /* 不足 5 帧的缺位保持 0（结构体初始/清零后即为 0） */
+    su3_make_side_id(id, sizeof(id), side);
+    n = snprintf(json, sizeof(json),
+                 "{\"id\":\"%s\",\"ts\":%d,\"type\":1,"
+                 "\"data\":{\"sensor_ts\":[%d,%d,%d,%d,%d],"
+                 "\"heart\":[%d,%d,%d,%d,%d],"
+                 "\"breath\":[%d,%d,%d,%d,%d],"
+                 "\"status\":[%d,%d,%d,%d,%d],"
+                 "\"sdata\":[%d,%d,%d,%d,%d],"
+                 "\"pdata\":[%d,%d,%d,%d,%d],"
+                 "\"sign\":[%d,%d,%d,%d,%d]}}",
+                 id, device_info->utc.time_stamp,
+                 a->sensor_ts[0], a->sensor_ts[1], a->sensor_ts[2],
+                 a->sensor_ts[3], a->sensor_ts[4],
+                 a->heart[0], a->heart[1], a->heart[2], a->heart[3], a->heart[4],
+                 a->breath[0], a->breath[1], a->breath[2], a->breath[3], a->breath[4],
+                 a->status[0], a->status[1], a->status[2], a->status[3], a->status[4],
+                 a->sdata[0], a->sdata[1], a->sdata[2], a->sdata[3], a->sdata[4],
+                 a->pdata[0], a->pdata[1], a->pdata[2], a->pdata[3], a->pdata[4],
+                 a->sign[0], a->sign[1], a->sign[2], a->sign[3], a->sign[4]);
+    if (n > 0 && (size_t)n < sizeof(json)) {
+        su3_publish_json(user_5s_data_publish_topic, json);
+    }
+    memset(a, 0, sizeof(*a));
+}
+
+static void su3_feed_1s(int side, const qs_pb_msg_sensor_1sec_info *msg)
+{
+    su3_5s_agg_t *a;
+    uint8_t i;
+
+    if (msg == NULL || side < 0 || side >= SU3_SENSOR_SIDE_MAX) {
+        return;
+    }
+    a = &s_5s_agg[side];
+    i = a->count;
+    if (i >= SU3_5S_SLOTS) {
+        memset(a, 0, sizeof(*a));
+        i = 0;
+    }
+    a->sensor_ts[i] = msg->timestamp;
+    a->heart[i] = msg->heartbeat;
+    a->breath[i] = msg->breath_rate;
+    a->status[i] = msg->status;
+    a->sdata[i] = msg->sdata;
+    a->pdata[i] = msg->pdata;
+    a->sign[i] = msg->sign;
+    a->count = (uint8_t)(i + 1U);
+
+    if (a->count >= SU3_5S_SLOTS) {
+        su3_publish_5s(side);
+    }
+}
+
+static void su3_publish_60s(int side, const qs_pb_msg_sensor_1min_info *msg)  /* 1min 数据上报云端*/
+{
+    char id[24];
+    char json[384];
+    int n;
+
+    if (msg == NULL) {
+        return;
+    }
+    su3_make_side_id(id, sizeof(id), side);
+    n = snprintf(json, sizeof(json),
+                 "{\"id\":\"%s\",\"ts\":%d,\"type\":2,"
+                 "\"data\":{\"sensor_ts\":%d,\"bed\":%d,\"heart\":%d,\"breath\":%d,"
+                 "\"Mmin\":%d,\"Mmean\":%d,\"NSD\":%d,\"NPD\":%d,\"SBP\":%d,\"DBP\":%d}}",
+                 id, device_info->utc.time_stamp,
+                 (int)msg->timestamp, msg->on_off_bed, msg->heartbeat, msg->breath_rate,
+                 msg->Mmin, msg->Mmean, msg->NSD, msg->Npd, msg->SBP, msg->DBP);
+    if (n > 0 && (size_t)n < sizeof(json)) {
+        su3_publish_json(user_60s_data_publish_topic, json);
+    }
+}
+
 static bool su3_log_report_raw(int side, uint8_t topic, const char *name,
                                const char *device_id, int32_t timestamp,
                                const uint8_t *data, int32_t data_len)
 {
+    (void)side;
+    (void)topic;
+    (void)name;
+    (void)device_id;
+    (void)timestamp;
+    (void)data;
     if (data_len < 0 || data_len > QS_PB_RAW_DATA_LEGNTH) {
-        ESP_LOGE(TAG, "[SU3_REPORT] invalid side=%d topic=%u name=%s len=%d",
-                 side, (unsigned)topic, name, (int)data_len);
         return false;
-    }
-
-    ESP_LOGI(TAG, "[SU3_REPORT] side=%d topic=%u name=%s id=%s ts=%d len=%d",
-             side, (unsigned)topic, name, device_id, (int)timestamp, (int)data_len);
-    if (data_len > 0) {
-        ESP_LOG_BUFFER_HEX_LEVEL(TAG, data, (size_t)data_len, ESP_LOG_INFO);
     }
     return true;
 }
 
-static void su3_on_topic(su3_addr_t src, uint8_t topic,
-                         const uint8_t *pb_data, size_t pb_len, void *user)
+static void su3_on_topic(su3_addr_t src, uint8_t topic, const uint8_t *pb_data, size_t pb_len, void *user)
 {
     int idx = su3_side_index(src);
-    char side_ch;
-    char json[512];
     (void)user;
 
     if (idx < 0 || pb_data == NULL) {
         return;
     }
-    side_ch = (idx == SU3_SIDE_LEFT) ? 'L' : 'R';
 
+    /* topic16：1s → 缓存，满 5 帧上报 5s/put */
     if (topic == SU3_TOPIC_SENSOR_1SEC) {
         qs_pb_msg_sensor_1sec_info msg;
         memset(&msg, 0, sizeof(msg));
-        // if (qs_pb_sensor_1sec_info_decode((char *)pb_data, pb_len, &msg) != QS_SUCCESS) {
-        //     return;
-        // }
-        /* 解析1秒实时数据 */
-        /* 解析1秒实时数据 */
-        qs_ret_code_t ret = qs_pb_sensor_1sec_info_decode(
-            (char *)pb_data,
-            pb_len,
-            &msg
-        );
-
-        // if (ret != QS_SUCCESS) {
-        //     ESP_LOGE(TAG,
-        //             "SU3 1s decode failed: src=0x%02X len=%u ret=%d",
-        //             src,
-        //             (unsigned)pb_len,
-        //             (int)ret);
-        //     return;
-        // }
-
-        /* 解析成功后打印字段 */
-        // ESP_LOGI(TAG,
-        //      "SU3 1s decode ok: id=%s ts=%d seq=%d "
-        //      "status=0x%X heart=%d breath=%d "
-        //      "sdata=%d pdata=%d sign=0x%X",
-        //      msg.device_id,
-        //      (int)msg.timestamp,
-        //      (int)msg.sequence,
-        //      (unsigned)msg.status,
-        //      (int)msg.heartbeat,
-        //      (int)msg.breath_rate,
-        //      (int)msg.sdata,
-        //      (int)msg.pdata,
-        //      (unsigned)msg.sign);
+        if (qs_pb_sensor_1sec_info_decode((char *)pb_data, pb_len, &msg) != QS_SUCCESS) {
+            ESP_LOGW(TAG, "1s decode fail src=0x%02X len=%u", src, (unsigned)pb_len);
+            return;
+        }
+/*      
+        // 打印 1s 数据
+        ESP_LOGI(TAG,"1s side=%d src=0x%02X id=%s ts=%d seq=%d status=0x%X ""heart=%d breath=%d sdata=%d pdata=%d sign=0x%X",
+                 idx, src, msg.device_id, (int)msg.timestamp, (int)msg.sequence,
+                 (unsigned)msg.status, (int)msg.heartbeat, (int)msg.breath_rate,
+                 (int)msg.sdata, (int)msg.pdata, (unsigned)msg.sign);
+*/
         g_su3_sensor[idx].info_1s = msg;
-        g_su3_sensor[idx].fresh_1s = true;
         if (!get_5s_flag) {
             get_5s_flag = true;
         }
-        /* 兼容旧打鼾/显示：左路同步到 user_5s（status 展平为近似） */
+        /* 左路同步旧缓存，供打鼾等本地逻辑 */
         if (idx == SU3_SIDE_LEFT && user_5s_sensor_info != NULL) {
-            strncpy(user_5s_sensor_info->device_id, msg.device_id, sizeof(user_5s_sensor_info->device_id) - 1);
+            strncpy(user_5s_sensor_info->device_id, msg.device_id,
+                    sizeof(user_5s_sensor_info->device_id) - 1);
             user_5s_sensor_info->timestamp = msg.timestamp;
             user_5s_sensor_info->sequence = msg.sequence;
             user_5s_sensor_info->heartbeat = msg.heartbeat;
             user_5s_sensor_info->breathRate = msg.breath_rate;
             memset(user_5s_sensor_info->status, 0, sizeof(user_5s_sensor_info->status));
-            /* bit2=打鼾 → 旧逻辑用 status[]==4；此处用单点近似 */
             user_5s_sensor_info->status[0] = (msg.status & 0x04) ? 4 : ((msg.status & 0x01) ? 1 : 0);
         }
-        snprintf(json, sizeof(json),
-                 "{\"id\":\"%s\",\"ts\":%d,\"type\":1,\"side\":\"%c\",\"sensor\":%u,"
-                 "\"data\":{\"sensor_ts\":%d,\"heart\":%d,\"breath\":%d,\"status\":%d,"
-                 "\"sdata\":%d,\"pdata\":%d,\"sign\":%d}}",
-                 device_info->id, device_info->utc.time_stamp, side_ch, (unsigned)src,
-                 (int)msg.timestamp, msg.heartbeat, msg.breath_rate, msg.status,
-                 msg.sdata, msg.pdata, msg.sign);
-        su3_publish_json(user_5s_data_publish_topic, json);
-        g_su3_sensor[idx].fresh_1s = false;
+
+        su3_feed_1s(idx, &msg); /* 缓存 1s 数据 */
         return;
     }
 
+    /* topic14：1min → 60s/put */
     if (topic == SU3_TOPIC_SENSOR_1MIN) {
         qs_pb_msg_sensor_1min_info msg;
         memset(&msg, 0, sizeof(msg));
@@ -2327,34 +2148,26 @@ static void su3_on_topic(su3_addr_t src, uint8_t topic,
             return;
         }
         g_su3_sensor[idx].info_1min = msg;
-        g_su3_sensor[idx].fresh_1min = true;
         if (idx == SU3_SIDE_LEFT && user_60s_sensor_info != NULL) {
             memcpy(user_60s_sensor_info, &msg, sizeof(msg));
         }
-        snprintf(json, sizeof(json),
-                 "{\"id\":\"%s\",\"ts\":%d,\"type\":2,\"side\":\"%c\",\"sensor\":%u,"
-                 "\"data\":{\"sensor_ts\":%d,\"bed\":%d,\"heart\":%d,\"breath\":%d,"
-                 "\"Mmin\":%d,\"Mmean\":%d,\"NSD\":%d,\"NPD\":%d,\"SBP\":%d,\"DBP\":%d}}",
-                 device_info->id, device_info->utc.time_stamp, side_ch, (unsigned)src,
-                 (int)msg.timestamp, msg.on_off_bed, msg.heartbeat, msg.breath_rate,
-                 msg.Mmin, msg.Mmean, msg.NSD, msg.Npd, msg.SBP, msg.DBP);
-        su3_publish_json(user_60s_data_publish_topic, json);
-        g_su3_sensor[idx].fresh_1min = false;
+        su3_publish_60s(idx, &msg);
         return;
     }
 
     if (topic == SU3_TOPIC_SENSOR_SAE) {
         qs_pb_msg_sleep_apnea_info msg;
+        char id[24];
+        char json[256];
         memset(&msg, 0, sizeof(msg));
         if (qs_pb_sleep_apnea_info_decode((char *)pb_data, pb_len, &msg) != QS_SUCCESS) {
             return;
         }
         g_su3_sensor[idx].info_sa = msg;
+        su3_make_side_id(id, sizeof(id), idx);
         snprintf(json, sizeof(json),
-                 "{\"id\":\"%s\",\"ts\":%d,\"type\":15,\"side\":\"%c\",\"sensor\":%u,"
-                 "\"data\":{\"status_flag\":%d}}",
-                 device_info->id, device_info->utc.time_stamp, side_ch, (unsigned)src,
-                 msg.status_flag);
+                 "{\"id\":\"%s\",\"ts\":%d,\"type\":15,\"data\":{\"status_flag\":%d}}",
+                 id, device_info->utc.time_stamp, msg.status_flag);
         su3_publish_json(user_sa_data_publish_topic, json);
         return;
     }
@@ -2363,30 +2176,20 @@ static void su3_on_topic(su3_addr_t src, uint8_t topic,
     if (topic == SU3_TOPIC_SLEEP_CYCLE) {
         qs_pb_msg_sleep_cycle_repo msg;
         char send_json_value[1024];
+        char id[24];
         memset(&msg, 0, sizeof(msg));
         if (qs_pb_sleep_cycle_repo_decode((char *)pb_data, pb_len, &msg) != QS_SUCCESS) {
-            ESP_LOGE(TAG, "[SU3_REPORT] topic=5 decode failed side=%d len=%u",
-                     idx, (unsigned)pb_len);
+            ESP_LOGE(TAG, "sleep report topic5 decode fail side=%d", idx);
             return;
         }
-        ESP_LOGI(TAG, "[SU3_REPORT] side=%d topic=5 id=%s ts=%d calResult=%d "
-                      "startTime=%d totalSleepTime=%d efficiency=%d quality=%d",
-                 idx, msg.device_id, (int)msg.timestamp, (int)msg.cal_result,
-                 (int)msg.start_time, (int)msg.total_sleep_time,
-                 (int)msg.sleep_efficiency, (int)msg.sleep_quality);
-        ESP_LOGI(TAG, "[SU3_REPORT] side=%d topic=5 turnover=%d latency=%d "
-                      "offBed=%d cRSD=%d slop1=%d slop2=%d osa=%d avgSA=%d maxSA=%d",
-                 idx, (int)msg.turnover_times, (int)msg.sleep_latency,
-                 (int)msg.off_bed_times, (int)msg.cRSD, (int)msg.slop1,
-                 (int)msg.slop2, (int)msg.oSA_times, (int)msg.Ave_SA_time,
-                 (int)msg.Longest_SA_time);
+        su3_make_side_id(id, sizeof(id), idx);
         snprintf(send_json_value, sizeof(send_json_value),
-                 "{\"id\":\"%s\",\"ts\":%d,\"type\":5,\"report\":\"%s\",\"side\":\"%c\","
+                 "{\"id\":\"%s\",\"ts\":%d,\"type\":5,\"report\":\"%s\","
                  "\"data\":{\"calResult\":%d,\"startTime\":%d,\"totalSleepTime\":%d,"
                  "\"sleepEfficiency\":%d,\"sleepQuality\":%d,\"turnoverTimes\":%d,"
                  "\"sleepLatency\":%d,\"offBedTimes\":%d,\"cRSD\":%d,\"slop1\":%d,"
                  "\"slop2\":%d,\"osaTimes\":%d,\"avgSA\":%d,\"maxSA\":%d}}",
-                 device_info->id, device_info->utc.time_stamp, json_report_name, side_ch,
+                 id, device_info->utc.time_stamp, json_report_name,
                  msg.cal_result, msg.start_time, msg.total_sleep_time,
                  msg.sleep_efficiency, msg.sleep_quality, msg.turnover_times,
                  msg.sleep_latency, msg.off_bed_times, msg.cRSD, msg.slop1,
@@ -2497,181 +2300,62 @@ static void su3_on_topic(su3_addr_t src, uint8_t topic,
     ESP_LOGD(TAG, "topic=%u side=%d pb_len=%u ignored", topic, idx, (unsigned)pb_len);
 }
 
-/** hello 后串行 set addr / set mode（禁止在 RX 回调里 su3_cli_exec） */
+/**
+ * hello 后初始化（禁止在 RX 回调里 su3_cli_exec）：
+ * 1) set mode 4 —— 收到 hello 即可发
+ * 2) set rtc   —— 等 SNTP(utc.flag) 就绪后发
+ * 左右地址固定 0x33 / 0x36，不再 set addr。
+ */
 static void su3_setup_task(void *pv)
 {
     (void)pv;
     while (1) {
         for (int i = 0; i < SU3_SENSOR_SIDE_MAX; i++) {
-            if (!g_su3_sensor[i].need_setup) {
+            su3_addr_t dest;
+            char rsp[64];
+            char rtc_cmd[40];
+            esp_err_t err;
+            time_t now_ts;
+            struct tm ti_local;
+
+            if (!g_su3_sensor[i].hello_seen || g_su3_sensor[i].setup_done) {
                 continue;
             }
-            su3_addr_t target = su3_side_to_addr((su3_side_t)i);
-            su3_addr_t dest = g_su3_sensor[i].pending_src
-                                  ? g_su3_sensor[i].pending_src
-                                  : target;
-            char rsp[64];
-            char cmd[32];
-            esp_err_t addr_err;
-            esp_err_t mode_err;
-            /* CLI 文本用逻辑地址 3/6，不是帧字节 0x33/0x36 */
-            snprintf(cmd, sizeof(cmd), "set addr %u", (unsigned)SU3_ADDR_OF(target));
-            ESP_LOGI(TAG, "setup side=%d dest=0x%02X: %s", i, dest, cmd);
-            addr_err = su3_cli_exec(dest, cmd, rsp, sizeof(rsp), SU3_SETUP_CMD_TIMEOUT_MS);
-            if (addr_err == ESP_OK) {
-                ESP_LOGI(TAG, "setup addr result=0x%x (%s), rsp=%s",
-                         (unsigned)addr_err, esp_err_to_name(addr_err), rsp);
-            } else {
-                ESP_LOGW(TAG, "setup addr result=0x%x (%s), side=%d dest=0x%02X",
-                         (unsigned)addr_err, esp_err_to_name(addr_err), i, dest);
-            }
-            /* 设址后后续命令发往目标地址 */
-            mode_err = su3_cli_exec(target, "set mode 4", rsp, sizeof(rsp),
-                                    SU3_SETUP_CMD_TIMEOUT_MS);
-            if (mode_err == ESP_OK) {
-                ESP_LOGI(TAG, "setup mode result=0x%x (%s), rsp=%s",
-                         (unsigned)mode_err, esp_err_to_name(mode_err), rsp);
-            } else {
-                ESP_LOGW(TAG, "setup mode result=0x%x (%s), side=%d dest=0x%02X",
-                         (unsigned)mode_err, esp_err_to_name(mode_err), i, target);
-            }
 
-            if (addr_err == ESP_OK && mode_err == ESP_OK) {
-                const char *test_cmd = "version";
-                char test_rsp[128] = {0};
+            dest = su3_side_to_addr((su3_side_t)i);
 
-                ESP_LOGI(TAG,
-                        "[SU3_TX_TEST] side=%d dest=0x%02X cmd=\"%s\"",
-                        i, target, test_cmd);
-
-                esp_err_t test_err = su3_cli_exec(
-                    target,
-                    test_cmd,
-                    test_rsp,
-                    sizeof(test_rsp),
-                    1000
-                );
-
-                if (test_err == ESP_OK && test_rsp[0] != '\0') {
-                    ESP_LOGI(TAG,
-                            "[SU3_RX_TEST] success side=%d src=0x%02X rsp=\"%s\"",
-                            i, target, test_rsp);
-                } else if (test_err == ESP_ERR_TIMEOUT) {
-                    ESP_LOGW(TAG,
-                            "[SU3_RX_TEST] timeout side=%d dest=0x%02X",
-                            i, target);
-                } else {
-                    ESP_LOGE(TAG,
-                            "[SU3_RX_TEST] failed side=%d err=0x%x (%s) rsp=\"%s\"",
-                            i,
-                            (unsigned)test_err,
-                            esp_err_to_name(test_err),
-                            test_rsp);
+            if (g_su3_sensor[i].need_setup) {
+                err = su3_cli_exec(dest, "set mode 4", rsp, sizeof(rsp),
+                                   SU3_SETUP_CMD_TIMEOUT_MS);
+                if (err != ESP_OK) {
+                    ESP_LOGW(TAG, "setup mode fail side=%d", i);
+                    continue;
                 }
                 g_su3_sensor[i].need_setup = false;
-                g_su3_sensor[i].setup_done = true;
-                s_su3_devic_id_flag = 1;
-                devic_id_flag = 1;
-                ESP_LOGI(TAG, "setup completed side=%d", i);
-            } else {
-                g_su3_sensor[i].need_setup = true;
-                g_su3_sensor[i].setup_done = false;
-                ESP_LOGW(TAG, "setup incomplete side=%d, retrying", i);
             }
+
+            if (!device_info->utc.flag) {
+                continue;
+            }
+
+            time(&now_ts);
+            localtime_r(&now_ts, &ti_local);
+            device_info->utc.time_stamp = (uint32_t)mktime(&ti_local);
+            snprintf(rtc_cmd, sizeof(rtc_cmd), "set rtc %lu",
+                     (unsigned long)device_info->utc.time_stamp);
+            err = su3_cli_exec(dest, rtc_cmd, rsp, sizeof(rsp), SU3_SETUP_CMD_TIMEOUT_MS);
+            if (err != ESP_OK) {
+                ESP_LOGW(TAG, "setup rtc fail side=%d", i);
+                continue;
+            }
+
+            g_su3_sensor[i].setup_done = true;
+            set_rtc_flag = 1;
+            ESP_LOGI(TAG, "setup ok side=%d", i);
         }
         vTaskDelay(pdMS_TO_TICKS(200));
     }
 }
-
-#if SU3_LIST_TEST_ENABLE
-static bool su3_list_has_report_zero(const char *rsp)
-{
-    const char *line = rsp;
-
-    while (line != NULL && *line != '\0') {
-        while (*line == '\r' || *line == '\n') {
-            line++;
-        }
-        if (line[0] == '0' && line[1] == ' ') {
-            return true;
-        }
-        line = strchr(line, '\n');
-        if (line != NULL) {
-            line++;
-        }
-    }
-    return false;
-}
-
-/**
- * 主动查询左右传感器的报告目录。
- * 必须运行在独立任务，不能放进 su3_rx_task/on_cli_push：同步等待 list
- * 应答期间仍需要 RX 任务持续收包。
- */
-static void su3_list_test_task(void *pv)
-{
-    static bool _report_zero_sent[SU3_SENSOR_SIDE_MAX];
-    (void)pv;
-
-    while (1) {
-        bool queried = false;
-
-        for (int i = 0; i < SU3_SENSOR_SIDE_MAX; i++) {
-            char rsp[SU3_CLI_RSP_DEFAULT] = {0};
-            su3_addr_t target;
-            esp_err_t err;
-
-            if (!g_su3_sensor[i].setup_done) {
-                continue;
-            }
-
-            queried = true;
-            target = su3_side_to_addr((su3_side_t)i);
-            ESP_LOGI(TAG, "[SU3_LIST_TEST] TX side=%d dest=0x%02X cmd=\"list\"",
-                     i, target);
-
-            err = su3_cli_list(target, rsp, sizeof(rsp), SU3_LIST_TIMEOUT_MS);
-            if (err == ESP_OK) {
-                ESP_LOGI(TAG, "[SU3_LIST_TEST] RX side=%d src=0x%02X:\n%s",
-                         i, target, rsp[0] != '\0' ? rsp : "<empty>");
-#if SU3_REPORT_ZERO_TEST_ENABLE
-                if (!_report_zero_sent[i] && su3_list_has_report_zero(rsp)) {
-                    snprintf(json_report_name, sizeof(json_report_name),
-                             "report-0-side-%d", i);
-                    err = su3_cli_fire(target, "report 0");
-                    if (err == ESP_OK) {
-                        _report_zero_sent[i] = true;
-                        ESP_LOGI(TAG, "[SU3_REPORT_TEST] TX side=%d dest=0x%02X "
-                                      "cmd=\"report 0\"",
-                                 i, target);
-                        /* report 0 异步返回 topic 5~12，本轮不再向另一侧发命令。 */
-                        vTaskDelay(pdMS_TO_TICKS(SU3_REPORT_RX_SETTLE_MS));
-                        break;
-                    }
-                    ESP_LOGW(TAG, "[SU3_REPORT_TEST] send failed side=%d dest=0x%02X "
-                                  "err=0x%x (%s)",
-                             i, target, (unsigned)err, esp_err_to_name(err));
-                }
-#endif
-            } else {
-                ESP_LOGW(TAG, "[SU3_LIST_TEST] failed side=%d dest=0x%02X "
-                              "err=0x%x (%s)",
-                         i, target, (unsigned)err, esp_err_to_name(err));
-            }
-
-            /* 左右两路严格串行，并给传感器留出少量总线空闲时间。 */
-            vTaskDelay(pdMS_TO_TICKS(200));
-        }
-
-        if (queried) {
-            vTaskDelay(pdMS_TO_TICKS(SU3_LIST_POLL_MS));
-        } else {
-            /* 等待 hello -> set addr -> set mode 4 完成。 */
-            vTaskDelay(pdMS_TO_TICKS(500));
-        }
-    }
-}
-#endif
 
 static void su3_app_start(void)
 {
@@ -2696,11 +2380,9 @@ static void su3_app_start(void)
         return;
     }
     su3_set_handlers(&h);
+    su3_cli_worker_start();  /* 启动 CLI 工作线程 */
     xTaskCreatePinnedToCore(su3_setup_task, "su3_setup", 4096, NULL, 4, NULL, 1);
-#if SU3_LIST_TEST_ENABLE
-    xTaskCreatePinnedToCore(su3_list_test_task, "su3_list", 4096, NULL, 3, NULL, 1);
-#endif
-    ESP_LOGI(TAG, "SU3 stack started (legacy uart_data_parser disabled)");
+    ESP_LOGI(TAG, "SU3 stack started");
 }
 #endif /* SU3_USE_NEW_STACK */
 
@@ -2713,8 +2395,6 @@ void app_control_server(void)
     g_MFP_Parsed_Mutex = xSemaphoreCreateMutex();
     if (g_MFP_Parsed_Mutex == NULL) {
         ESP_LOGE(TAG, "Failed to create MFP parsed mutex!");
-    } else {
-        ESP_LOGI(TAG, "MFP parsed mutex created successfully");
     }
     
     //ble 数据处理
@@ -2723,7 +2403,6 @@ void app_control_server(void)
     xTaskCreatePinnedToCore(one_key_config_wifi_task, "one_key_config_wifi_task", 1024*2, NULL, 6, NULL, 1);   //缩减1024*2
     
     su3_app_start();
-    ESP_LOGI(TAG, "su3_app_start successfully");
 
     //utc 获取
     xTaskCreatePinnedToCore(utc_get_task, "utc_get", 1024*6, NULL, 3, NULL, 1);      //缩减4096*2   ok
@@ -2731,7 +2410,8 @@ void app_control_server(void)
     //系统控制任务（LED + 打鼾检测）- 量产必须保留
     xTaskCreatePinnedToCore(system_control_task, "sys_ctrl", 1024*2, NULL, 2, NULL, 1);
     
-    xTaskCreatePinnedToCore(Task_scheduling, "Task_scheduling", 1024*2, NULL, 6, NULL, 1);//缩减2048*7
+    su3_report_nvs_load();
+    xTaskCreatePinnedToCore(su3_report_sync_task, "report_sync", 3072, NULL, 3, NULL, 1);
     // xTaskCreatePinnedToCore(key_task, "key_task", 1024, NULL, 6, NULL, 1);//缩减2048*7
 
     xTaskCreate(MFP_DataReceive_task, "MFP_DataReceive_task", ECHO_TASK_STACK_SIZE, NULL, 10, NULL);     // mfp口的接收任务 1024*4
@@ -2752,14 +2432,6 @@ void app_control_server(void)
     // xTaskCreatePinnedToCore(wifi_check_task, "wifi_check_task", 1024*4, NULL, 5, NULL, 1); 
 }
 
-void set_sleep_up_flag(uint8_t data)
-{
-    sleep_up_flag = data;
-}
-uint8_t get_sleep_up_flag(void)
-{
-    return sleep_up_flag;
-}
 void set_ota_now_flag(uint8_t data)
 {
     ota_now_flag = data;
@@ -2768,30 +2440,23 @@ uint8_t get_ota_now_flag(void)
 {
     return ota_now_flag;
 }
-//report_cli_data设置指令代码＋数据
-void set_report_cli(uint8_t data1,uint8_t data2)
-{
-    report_cli_data[0] = data1;
-    report_cli_data[1] = data2;
-}
+/** 至少一侧 setup 完成（供调试/兼容旧接口名） */
 uint8_t get_devic_id_flag(void)
 {
-    return devic_id_flag;
+    return (g_su3_sensor[SU3_SIDE_LEFT].setup_done ||
+            g_su3_sensor[SU3_SIDE_RIGHT].setup_done) ? 1U : 0U;
 }
 void sensor_reboot_config(void)
 {
+    int i;
+
     set_rtc_flag = 0;
-    devic_id_flag = 0;
-}
-
-void set_mode_flag_config(uint8_t data)
-{
-    set_mode_flag = data;
-}
-
-uint8_t get_mode_flag_config(void)
-{
-    return set_mode_flag;
+    for (i = 0; i < SU3_SENSOR_SIDE_MAX; i++) {
+        g_su3_sensor[i].setup_done = false;
+        if (g_su3_sensor[i].hello_seen) {
+            g_su3_sensor[i].need_setup = true;
+        }
+    }
 }
 
 void check_stack_space(void)

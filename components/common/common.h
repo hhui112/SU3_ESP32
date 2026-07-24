@@ -575,14 +575,13 @@ typedef struct
 
 #if SU3_USE_NEW_STACK
 #include "qs_protobuf.h"
-/** 双路传感器本地缓存（左=0，右=1） */
+/** 双路传感器本地缓存（左=0x33，右=0x36） */
 typedef struct {
     bool hello_seen;
-    bool need_setup;      /* hello 后待 set addr / set mode（勿在 RX 里同步 CLI） */
-    bool setup_done;
+    bool need_setup;      /* true=待 set mode；mode 成功后清零 */
+    bool setup_done;      /* mode + rtc 都成功 */
     bool fresh_1s;
     bool fresh_1min;
-    uint8_t pending_src;  /* hello 时的实际源地址（设 addr 前可能不是 03/06） */
     char device_id[24];
     qs_pb_msg_sensor_1sec_info info_1s;
     qs_pb_msg_sensor_1min_info info_1min;

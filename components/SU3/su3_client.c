@@ -143,20 +143,17 @@ static void su3_on_pdu(const su3_pdu_info_t *pdu, void *user)
     if (pdu == NULL) {
         return;
     }
-    ESP_LOGI(TAG,
-         "PDU: src=0x%02X dst=0x%02X topic=%u pb_len=%u",
-         pdu->src_addr,
-         pdu->dst_addr,
-         (unsigned)pdu->topic,
-         (unsigned)pdu->pb_len);
-    if (pdu->topic == SU3_TOPIC_CLI) {
+
+    // ESP_LOGI(TAG,"PDU: src=0x%02X dst=0x%02X topic=%u pb_len=%u",pdu->src_addr,pdu->dst_addr,(unsigned)pdu->topic,(unsigned)pdu->pb_len);
+    
+    if (pdu->topic == SU3_TOPIC_CLI) /* CLI 消息处理 */
+    {
         memset(devid, 0, sizeof(devid));
         if (su3_proto_decode_cli(pdu->pb_data, pdu->pb_len, cmd, sizeof(cmd),
                                  devid, sizeof(devid)) != ESP_OK) {
             return;
         }
-        ESP_LOGI(TAG, "cli src=0x%02X dst=0x%02X cmd=\"%s\" id=%s",
-                 pdu->src_addr, pdu->dst_addr, cmd, devid);
+        ESP_LOGI(TAG, "cli src=0x%02X cmd=\"%s\"", pdu->src_addr, cmd);
         su3_store_peer_id(pdu->src_addr, devid);
 
         if (xSemaphoreTake(s_pending_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
@@ -178,9 +175,9 @@ static void su3_on_pdu(const su3_pdu_info_t *pdu, void *user)
         return;
     }
 
-    if (s_handlers.on_topic != NULL) {
-        s_handlers.on_topic(pdu->src_addr, pdu->topic, pdu->pb_data, pdu->pb_len,
-                            s_handlers.user);
+    if (s_handlers.on_topic != NULL) /* 其他 topic 消息处理 */
+    { 
+        s_handlers.on_topic(pdu->src_addr, pdu->topic, pdu->pb_data, pdu->pb_len, s_handlers.user); /* 其他 topic 消息处理 回调到上层 su3_on_topic 处理*/
     }
 }
 
@@ -263,8 +260,7 @@ static void su3_rx_task(void *arg)
         if ((xTaskGetTickCount() - last_stat) >= pdMS_TO_TICKS(5000)) {
             uint32_t ok = 0, crc_fail = 0, overflow = 0;
             su3_frame_get_stats(s_frame, &ok, &crc_fail, &overflow);
-            ESP_LOGI(TAG, "rx stats: bytes=%u frame_ok=%u crc_fail=%u overflow=%u",
-                     (unsigned)rx_bytes, (unsigned)ok, (unsigned)crc_fail, (unsigned)overflow);
+           // ESP_LOGI(TAG, "rx stats: bytes=%u frame_ok=%u crc_fail=%u overflow=%u",(unsigned)rx_bytes, (unsigned)ok, (unsigned)crc_fail, (unsigned)overflow);
             last_stat = xTaskGetTickCount();
         }
     }
@@ -379,8 +375,8 @@ void su3_set_handlers(const su3_handlers_t *handlers)
     s_handlers = *handlers;
 }
 
-esp_err_t su3_cli_exec(su3_addr_t dest, const char *cmd,
-                       char *rsp, size_t rsp_len, uint32_t timeout_ms)
+/* 发送 CLI 消息，并等待应答 */
+esp_err_t su3_cli_exec(su3_addr_t dest, const char *cmd,char *rsp, size_t rsp_len, uint32_t timeout_ms)
 {
     esp_err_t err;
     su3_resp_kind_t kind;

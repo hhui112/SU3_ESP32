@@ -31,7 +31,7 @@ void su3_set_handlers(const su3_handlers_t *handlers);
 
 /**
  * 同步 CLI：编码 CliCommand → 组帧发送 → 等待应答写入 rsp。
- * @param dest  目标传感器地址（左 0x03 / 右 0x06）
+ * @param dest  目标传感器地址（左 0x33 / 右 0x36）
  */
 esp_err_t su3_cli_exec(su3_addr_t dest, const char *cmd,
                        char *rsp, size_t rsp_len, uint32_t timeout_ms);

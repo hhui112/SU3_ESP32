@@ -81,6 +81,7 @@ esp_err_t su3_proto_decode_cli(const uint8_t *pb, size_t pb_len,
     return ESP_OK;
 }
 
+/* 根据命令字符串判断应答类型（精确匹配，不用 strstr 模糊） */
 su3_resp_kind_t su3_proto_classify_cmd(const char *cmd)
 {
     if (cmd == NULL) {
